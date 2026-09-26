@@ -37,14 +37,17 @@ Every value below is representative. Line numbers refer to Bilimbi's
   current contract does not define typed supplier or transport references.
   Grouping these fields in a report remains out of scope (requirements 52–54,
   89, 111).
-- Identity contains code, kind, item and immutable source transaction, while
-  dimensions are only line evidence and location is inferred from transaction
-  history. There is no public typed per-roll dimensions or current location
-  read. The scenario proves the labelled transfer and derives cure age from
-  the roll's source transaction, but a scan screen would need a generic Factory
-  read model for those fields (requirements 63, 70–71, 113, 150). Confirm the
-  actual label and measurement workflow before deciding whether an Extension
-  is justified.
+- Inventory now retains typed width, length and thickness with units and
+  measured or nominal provenance on each identified output. `get_identity/3`
+  reads them and `get_identity_positions/3` derives remaining locations and
+  quantities from the ledger. A fully drawn roll has no current stock position.
+  The scenario proves these reads for rolls and packs, while actual label and
+  measurement practice still needs plant confirmation (requirements 63,
+  70–71, 113, 150).
+- `get_run_yield/3` reads each cut's 49 kg input, 32 kg product, 14 kg trim,
+  2 kg waste and 1 kg variance from its Inventory transaction;
+  `get_unit_yield/3` associates the input laminate unit with that run. These
+  balances are native-unit quantities, not a plant-approved KPI definition.
 - The ledger and execution read models expose the facts needed for per-run
   material balance, but Factory has no monthly supplier/run/resource/location
   report API yet. In this scenario supplier remains free text and trim is

@@ -9,6 +9,7 @@ defmodule Bilimbi.Factory.Inventory.Ledger.Request do
   import Ecto.Changeset
 
   alias Bilimbi.Factory.Inventory.Transaction
+  alias Bilimbi.Factory.Inventory.Dimension
 
   @header_types %{
     request_id: :string,
@@ -330,11 +331,26 @@ defmodule Bilimbi.Factory.Inventory.Ledger.Request do
   defp identity(:identity, value) do
     kind = value[:kind] || value["kind"]
     code = value[:code] || value["code"]
+    dimensions = value[:dimensions] || value["dimensions"]
+
+    valid_dimensions =
+      dimensions == nil or
+        (kind == "unit" and is_map(dimensions) and map_size(dimensions) in 1..3 and
+           Enum.all?(dimensions, fn {name, measurement} ->
+             name in [:width, :length, :thickness, "width", "length", "thickness"] and
+               match?({:ok, _}, Dimension.parse(measurement))
+           end) and
+           dimensions |> Map.keys() |> Enum.map(&to_string/1) |> Enum.uniq() |> length() ==
+             map_size(dimensions))
 
     if kind in ["lot", "unit"] and is_binary(code) and String.trim(code) != "" and
-         byte_size(code) <= 255 and map_size(value) == 2,
+         byte_size(code) <= 255 and map_size(value) == if(dimensions == nil, do: 2, else: 3) and
+         valid_dimensions,
        do: [],
-       else: [identity: "needs kind (lot or unit) and a non-empty code of at most 255 bytes"]
+       else: [
+         identity:
+           "needs kind (lot or unit), a non-empty code of at most 255 bytes, and valid unit dimensions"
+       ]
   end
 
   defp line_fields(:transfer), do: [:from_location_id, :to_location_id | @common]

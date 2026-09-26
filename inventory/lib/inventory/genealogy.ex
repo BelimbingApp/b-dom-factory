@@ -103,7 +103,12 @@ defmodule Bilimbi.Factory.Inventory.Genealogy do
       item_id: item_id,
       kind: if(row.kind == "lot", do: :lot, else: :unit),
       code: row.code,
-      source_transaction_id: row.source_transaction_id
+      source_transaction_id: row.source_transaction_id,
+      dimensions:
+        Map.new(row.dimensions || %{}, fn {name, value} ->
+          {:ok, dimension} = Bilimbi.Factory.Inventory.Dimension.parse(value)
+          {String.to_existing_atom(name), dimension}
+        end)
     }
   end
 end

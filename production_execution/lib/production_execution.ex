@@ -18,6 +18,7 @@ defmodule Bilimbi.Factory.ProductionExecution do
   alias Bilimbi.Factory.ProductDefinition
   alias Bilimbi.Factory.ProductionExecution.HoldOverride
   alias Bilimbi.Factory.ProductionExecution.Trace
+  alias Bilimbi.Factory.ProductionExecution.Yield
   alias Bilimbi.Factory.ProductionExecution.Schemas.{Execution, Order}
 
   @order_fields [
@@ -137,6 +138,18 @@ defmodule Bilimbi.Factory.ProductionExecution do
         execution -> {:ok, Map.take(execution, @execution_fields)}
       end
     end
+  end
+
+  @doc "Reads one run's Inventory balance: input, product, trim, waste, and signed variance in its native unit."
+  def get_run_yield(%Scope{} = scope, company_id, execution_id) do
+    with {:ok, _company} <- company(scope, company_id),
+         do: Yield.for_run(scope, company_id, execution_id)
+  end
+
+  @doc "Reads whole-run balances for the production creation and draws of a unit, with its own input or output quantities."
+  def get_unit_yield(%Scope{} = scope, company_id, identity_id) do
+    with {:ok, _company} <- company(scope, company_id),
+         do: Yield.for_unit(scope, company_id, identity_id)
   end
 
   @doc "Adds production order, operation, and resource context to Inventory's backward genealogy."

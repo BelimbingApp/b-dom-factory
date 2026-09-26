@@ -34,6 +34,11 @@
   accepts only its documented `process_config` keys; list unconfirmed reactor,
   cleaning, and source fields in that doc until a generic public contract is
   agreed, rather than hiding them in another configuration key or the fixture.
+- For a unit's physical size and location, use Inventory identity dimensions
+  and `get_identity_positions/3`; for run and input-unit material balances use
+  `get_run_yield/3` and `get_unit_yield/3`. Their sources are the existing
+  Inventory ledger and execution link, so do not parse line evidence or keep
+  another yield or location store.
 
 ## Maintaining this file
 

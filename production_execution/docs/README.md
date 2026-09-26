@@ -80,6 +80,15 @@ transforms that drew a visited identity (`Inventory.list_identity_draws/3`),
 so a run without an identified output still appears. Inventory alone stores
 material ancestry.
 
+`get_run_yield/3` derives one execution's native-unit input, product, trim,
+waste, and signed variance from its linked Inventory transaction. Product
+includes output roles other than `trim` and `waste`. `get_unit_yield/3` lists
+the balances of the unit's creation run and later production draws, with that
+unit's own input and output quantities shown separately. A balance belongs to
+the whole run; Factory does not invent a share of a multi-input run for one unit.
+Only transforms have an input-to-output conservation balance; a standalone
+output or consumption run has one side only.
+
 The [representative Mr Packaging scenario](mr-packaging-scenario.md) exercises
 these contracts from receipt to despatch and lists every plant assumption and
 public-contract limit found during that validation.

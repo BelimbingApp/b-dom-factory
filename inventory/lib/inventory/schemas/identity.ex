@@ -9,11 +9,19 @@ defmodule Bilimbi.Factory.Inventory.Schemas.Identity do
     field :source_transaction_id, :id
     field :kind, :string
     field :code, :string
+    field :dimensions, :map, default: %{}
   end
 
   def creation_changeset(attributes) do
     %__MODULE__{}
-    |> cast(attributes, [:company_id, :material_id, :source_transaction_id, :kind, :code])
+    |> cast(attributes, [
+      :company_id,
+      :material_id,
+      :source_transaction_id,
+      :kind,
+      :code,
+      :dimensions
+    ])
     |> validate_required([:company_id, :material_id, :source_transaction_id, :kind, :code])
     |> validate_inclusion(:kind, ["lot", "unit"])
     |> unique_constraint([:company_id, :material_id, :code])
