@@ -24,6 +24,12 @@ and phases are Bilimbi's `docs/plans/factory/0000-factory-domain.md` and
 - Namespaces are `Bilimbi.Factory.<Module>` with OTP app
   `:bilimbi_factory_<folder>`, matching Base and Core's
   `Bilimbi.<Container>.<Module>` shape that the graph-edge check keys on.
+- Mount a real copy (clone or `rsync`), not a symlink: `mix.exs` locates the
+  Platform with `__DIR__`, which resolves through a symlink to this checkout.
+- A `schema_contract` describes only `:compatible_baseline` tables (Belimbing's
+  shape); adoption refuses a missing table, so Bilimbi-only tables stay out,
+  as Core Geonames' postcode overrides do. `inventory/lib/inventory/schema_contract.ex`
+  is the example.
 - Never commit a lock file here. Mounted builds share Bilimbi's ignored
   `.scratchpad/composition-lock/` overlay (`mix/composition_lock.exs`).
 - CI is `.github/workflows/ci.yml`; the Bilimbi revision it builds against is

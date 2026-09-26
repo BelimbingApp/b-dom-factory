@@ -11,7 +11,9 @@ Bilimbi checkout; it does not build on its own.
 | [`product_definition/`](product_definition/docs/README.md) | `factory/product_definition` | what is made and how: BOMs, routings, work centres |
 | [`production_execution/`](production_execution/docs/README.md) | `factory/production_execution` | actual work and its Inventory postings; depends on `factory/inventory` |
 
-The modules are scaffolds today. Their scope and phases are in Bilimbi's
+Inventory has its Phase 1 catalog, locations, units, and stock-position
+reads; Product Definition and Production Execution are scaffolds. Their scope
+and phases are in Bilimbi's
 [Factory Domain plan](https://github.com/BelimbingApp/bilimbi/blob/main/docs/plans/factory/0000-factory-domain.md) and
 [Inventory module plan](https://github.com/BelimbingApp/bilimbi/blob/main/docs/plans/factory/0010-inventory-module.md).
 
