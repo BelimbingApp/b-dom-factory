@@ -78,8 +78,9 @@ defmodule Bilimbi.Factory.ProductDefinition do
 
   @doc """
   Publishes the next routing revision. Operations have a unique `code`, positive
-  `sequence`, `inputs` and `outputs` (item IDs defined in the Formula/BOM),
-  and nonempty `allowed_resource_ids`. Config is versioned with the revision.
+  `sequence`, `inputs` and `outputs` (Inventory item IDs), and nonempty
+  `allowed_resource_ids`. Config is versioned with the revision. Items are
+  matched against a Formula/BOM revision only by `select_revisions/5`.
   """
   def publish_routing(%Scope{} = scope, company_id, product_id, attrs) when is_map(attrs) do
     with {:ok, _product} <- get_product(scope, company_id, product_id),
