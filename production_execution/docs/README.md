@@ -41,17 +41,21 @@ both live commands (`source: :live`) and historical imports
   mismatched, or future source is refused. Inventory verifies that the named
   identity still holds the consumed quantity at the location. An identified
   transform input also requires identified outputs.
-- For early consumption, provide `hold_override` with `actor`, the
-  authenticated `Bilimbi.Base.Authz.Actor` of the calling edge, and a
-  nonblank `reason`. The actor must belong to the scope's tenant and the
-  execution's company; a bare `actor_type`/`actor_id` is refused. Base Authz
-  must grant `factory.production-execution.material-hold.override` to that
-  actor, whose type, ID, and `acting_for_user_id` are recorded. An import
-  also supplies the historical override's source `evidence`; its row is
-  recorded with `source: "import"` and the importing principal as its actor,
-  not as the approver. `list_hold_overrides/3` returns the source, actor,
-  time, reason, evidence, identity, execution, and Inventory transaction
-  after commit.
+- For early consumption, provide `hold_override` with `actor`, a
+  `Bilimbi.Base.Authz.Actor` in the scope's tenant and the execution's
+  company, and a nonblank `reason`. Base Authz must grant
+  `factory.production-execution.material-hold.override` to that actor. The
+  decision runs before the posting transaction, so a refused attempt keeps
+  its Authz decision log. Bilimbi's `Scope` does not yet carry an
+  authenticated actor, so this principal is caller-asserted until it does.
+- A live override records the actor as both approver (`actor_*`) and
+  recorder (`recorded_by_*`), timed when authorized. An import also supplies
+  the source `evidence`, the historical `occurred_at` (not after completion),
+  and optionally the historical `approver` (`type`, `id`, and an agent's
+  `acting_for_user_id`); its approver is null when the source names none,
+  and the importing actor is recorded only in `recorded_by_*`.
+  `list_hold_overrides/3` returns the source, approver, recorder, time,
+  reason, evidence, identity, execution, and Inventory transaction.
 
 The facade posts through Inventory's named production functions, carrying
 opaque execution, order/batch, and resource references. Execution and material

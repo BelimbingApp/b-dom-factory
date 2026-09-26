@@ -4,6 +4,11 @@ defmodule Bilimbi.Factory.ProductionExecution do
 
   Live commands and historical imports use `complete_operation/5`. Execution
   and its Inventory material effects commit in one database transaction.
+
+  A material hold override is authorized against the `Bilimbi.Base.Authz.Actor`
+  the caller supplies. Bilimbi's `Scope` does not yet carry an authenticated
+  actor, so the recorded principal is caller-asserted until it does; this
+  check then requires the Scope's actor.
   """
   import Ecto.Query
   alias Bilimbi.Base.Repo
@@ -99,7 +104,8 @@ defmodule Bilimbi.Factory.ProductionExecution do
       when source in [:live, :import] and is_map(attrs) do
     with {:ok, order} <- get_order(scope, company_id, order_id),
          {:ok, selected} <- selected_revisions(scope, company_id, order),
-         {:ok, request} <- validate(scope, company_id, order, selected, source, attrs) do
+         {:ok, request} <- validate(scope, company_id, order, selected, source, attrs),
+         {:ok, overrides} <- check_holds(scope, company_id, request) do
       Repo.transaction(fn ->
         Repo.one!(
           from(o in Order,
@@ -110,7 +116,7 @@ defmodule Bilimbi.Factory.ProductionExecution do
 
         case Repo.get_by(Execution, company_id: company_id, request_id: request.request_id) do
           nil ->
-            commit(scope, company_id, order, request)
+            commit(scope, company_id, order, request, overrides)
 
           existing when existing.request_fingerprint == request.request_fingerprint ->
             Map.take(existing, @execution_fields)
@@ -167,6 +173,9 @@ defmodule Bilimbi.Factory.ProductionExecution do
            :actor_type,
            :actor_id,
            :acting_for_user_id,
+           :recorded_by_type,
+           :recorded_by_id,
+           :recorded_by_acting_for_user_id,
            :reason,
            :evidence,
            :occurred_at
@@ -175,13 +184,7 @@ defmodule Bilimbi.Factory.ProductionExecution do
     end
   end
 
-  defp commit(scope, company_id, order, request) do
-    overrides =
-      case check_holds(scope, company_id, request) do
-        {:ok, overrides} -> overrides
-        {:error, reason} -> Repo.rollback(reason)
-      end
-
+  defp commit(scope, company_id, order, request, overrides) do
     context = %{
       operation_execution: request.request_id,
       order_or_batch: order.code,
@@ -288,7 +291,7 @@ defmodule Bilimbi.Factory.ProductionExecution do
          {:ok, outputs} <- lines(outputs, operation["outputs"]),
          {:ok, holds} <- hold_rules(selected, inputs),
          {:ok, hold_override, override_actor} <-
-           validate_override(scope, company_id, source, hold_override),
+           validate_override(scope, company_id, source, completed_at, hold_override),
          true <- inputs != [] or outputs != [],
          true <- is_nil(variance) or (is_map(variance) and inputs != [] and outputs != []) do
       request = %{
@@ -381,55 +384,110 @@ defmodule Bilimbi.Factory.ProductionExecution do
     end
   end
 
-  @override_keys [:actor, :reason, :evidence, "actor", "reason", "evidence"]
+  @override_keys [:actor, :reason, :evidence, :occurred_at, :approver] ++
+                   ~w(actor reason evidence occurred_at approver)
 
-  defp validate_override(_scope, _company_id, _source, nil), do: {:ok, nil, nil}
+  defp validate_override(_scope, _company_id, _source, _completed_at, nil), do: {:ok, nil, nil}
 
-  defp validate_override(scope, company_id, source, override) when is_map(override) do
+  defp validate_override(scope, company_id, source, completed_at, override)
+       when is_map(override) do
     actor = value(override, :actor)
     reason = value(override, :reason)
     evidence = value(override, :evidence)
+    occurred_at = value(override, :occurred_at)
 
-    cond do
-      not is_struct(actor, Authz.Actor) ->
-        {:error, :hold_override_unauthenticated}
-
-      Scope.tenant_id(actor.scope) != Scope.tenant_id(scope) or actor.company_id != company_id ->
-        {:error, :hold_override_actor_mismatch}
-
-      not Enum.all?(Map.keys(override), &(&1 in @override_keys)) or
-        not nonblank?(reason) or
-        (source == :live and not is_nil(evidence)) or
-          (source == :import and not nonblank?(evidence)) ->
-        {:error, :invalid_hold_override}
-
-      true ->
-        {:ok,
-         %{
-           actor_type: Authz.Actor.principal_type(actor),
-           actor_id: actor.id,
-           acting_for_user_id: actor.acting_for_user_id,
-           reason: String.trim(reason),
-           evidence: evidence && String.trim(evidence)
-         }, actor}
+    with true <- is_struct(actor, Authz.Actor),
+         true <- Enum.all?(Map.keys(override), &(&1 in @override_keys)),
+         true <- nonblank?(reason),
+         {:same_company, true} <-
+           {:same_company,
+            Scope.tenant_id(actor.scope) == Scope.tenant_id(scope) and
+              actor.company_id == company_id},
+         {:ok, approver} <- override_approver(source, actor, override),
+         true <-
+           (source == :live and is_nil(evidence) and is_nil(occurred_at)) or
+             (source == :import and nonblank?(evidence) and is_struct(occurred_at, DateTime) and
+                DateTime.compare(occurred_at, completed_at) != :gt) do
+      {:ok,
+       %{
+         actor_type: approver && approver.type,
+         actor_id: approver && approver.id,
+         acting_for_user_id: approver && approver.acting_for_user_id,
+         recorded_by_type: Authz.Actor.principal_type(actor),
+         recorded_by_id: actor.id,
+         recorded_by_acting_for_user_id: actor.acting_for_user_id,
+         reason: String.trim(reason),
+         evidence: evidence && String.trim(evidence),
+         occurred_at: occurred_at
+       }, actor}
+    else
+      {:same_company, false} -> {:error, :hold_override_actor_mismatch}
+      _ -> {:error, :invalid_hold_override}
     end
   end
 
-  defp validate_override(_scope, _company_id, _source, _override),
+  defp validate_override(_scope, _company_id, _source, _completed_at, _override),
     do: {:error, :invalid_hold_override}
+
+  defp override_approver(:live, actor, override) do
+    if is_nil(value(override, :approver)) do
+      {:ok,
+       %{
+         type: Authz.Actor.principal_type(actor),
+         id: actor.id,
+         acting_for_user_id: actor.acting_for_user_id
+       }}
+    else
+      :error
+    end
+  end
+
+  defp override_approver(:import, _actor, override) do
+    case value(override, :approver) do
+      nil ->
+        {:ok, nil}
+
+      approver when is_map(approver) ->
+        type = value(approver, :type)
+        id = value(approver, :id)
+        acting_for = value(approver, :acting_for_user_id)
+
+        if is_integer(id) and id > 0 and
+             ((type == "user" and is_nil(acting_for)) or
+                (type == "agent" and is_integer(acting_for) and acting_for > 0)) do
+          {:ok, %{type: type, id: id, acting_for_user_id: acting_for}}
+        else
+          :error
+        end
+
+      _ ->
+        :error
+    end
+  end
 
   defp nonblank?(text), do: is_binary(text) and String.trim(text) != ""
 
   defp check_holds(scope, company_id, request) do
-    request.holds
-    |> Enum.uniq_by(fn {line, _hours} -> {Map.get(line, :identity_id), line.item_id} end)
-    |> Enum.reduce_while({:ok, []}, fn {line, hours}, {:ok, acc} ->
-      case check_hold(scope, company_id, request, line, hours) do
-        {:ok, nil} -> {:cont, {:ok, acc}}
-        {:ok, override} -> {:cont, {:ok, [override | acc]}}
-        error -> {:halt, error}
-      end
-    end)
+    recorded? =
+      Repo.exists?(
+        from(e in Execution,
+          where: e.company_id == ^company_id and e.request_id == ^request.request_id
+        )
+      )
+
+    if recorded? do
+      {:ok, []}
+    else
+      request.holds
+      |> Enum.uniq_by(fn {line, _hours} -> {Map.get(line, :identity_id), line.item_id} end)
+      |> Enum.reduce_while({:ok, []}, fn {line, hours}, {:ok, acc} ->
+        case check_hold(scope, company_id, request, line, hours) do
+          {:ok, nil} -> {:cont, {:ok, acc}}
+          {:ok, override} -> {:cont, {:ok, [override | acc]}}
+          error -> {:halt, error}
+        end
+      end)
+    end
   end
 
   defp check_hold(scope, company_id, request, line, hours) do
@@ -476,7 +534,7 @@ defmodule Bilimbi.Factory.ProductionExecution do
          source_transaction_id: source_id,
          identity_id: identity_id,
          item_id: line.item_id,
-         occurred_at: DateTime.utc_now()
+         occurred_at: request.hold_override.occurred_at || DateTime.utc_now()
        })}
     else
       {:error, :hold_override_denied}

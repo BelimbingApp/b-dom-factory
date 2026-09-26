@@ -1,4 +1,14 @@
 defmodule Bilimbi.Factory.ProductionExecution.HoldOverride do
+  @moduledoc """
+  Immutable evidence of one material hold override.
+
+  `actor_*` is the approver: the authorized principal for a live override, or
+  the historical approver from an import's source evidence (nil when the source
+  names none). `recorded_by_*` is the principal Base Authz authorized to record
+  it. Both are caller-asserted until Bilimbi's `Scope` carries the
+  authenticated actor. `occurred_at` is when the override was made; for an
+  import, the historical time from the source.
+  """
   use Ecto.Schema
   import Ecto.Changeset
 
@@ -13,6 +23,9 @@ defmodule Bilimbi.Factory.ProductionExecution.HoldOverride do
     field(:actor_type, :string)
     field(:actor_id, :integer)
     field(:acting_for_user_id, :integer)
+    field(:recorded_by_type, :string)
+    field(:recorded_by_id, :integer)
+    field(:recorded_by_acting_for_user_id, :integer)
     field(:reason, :string)
     field(:evidence, :string)
     field(:occurred_at, :utc_datetime_usec)
@@ -31,6 +44,9 @@ defmodule Bilimbi.Factory.ProductionExecution.HoldOverride do
       :actor_type,
       :actor_id,
       :acting_for_user_id,
+      :recorded_by_type,
+      :recorded_by_id,
+      :recorded_by_acting_for_user_id,
       :reason,
       :evidence,
       :occurred_at
@@ -43,8 +59,8 @@ defmodule Bilimbi.Factory.ProductionExecution.HoldOverride do
       :identity_id,
       :item_id,
       :source,
-      :actor_type,
-      :actor_id,
+      :recorded_by_type,
+      :recorded_by_id,
       :reason,
       :occurred_at
     ])

@@ -202,6 +202,17 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
   defp complete(context, order, attrs, source \\ :live),
     do: ProductionExecution.complete_operation(context.scope, 73, order.id, source, attrs)
 
+  defp override_decisions do
+    %{rows: [[count]]} =
+      SQL.query!(
+        Repo,
+        "SELECT count(*) FROM base_authz_decision_logs WHERE capability = $1",
+        ["factory.production-execution.material-hold.override"]
+      )
+
+    count
+  end
+
   test "hold override requires a reason and the declared capability", context do
     authz_tables!()
     {order, attrs} = held_order(context)
@@ -221,29 +232,31 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
                Map.put(attrs, :hold_override, %{actor: actor, reason: "urgent"})
              )
 
+    assert override_decisions() == 1
     assert [] = Repo.all(Bilimbi.Factory.ProductionExecution.HoldOverride)
+    assert [] = Repo.all(Bilimbi.Factory.ProductionExecution.Schemas.Execution)
+    assert {:ok, [_receipt]} = Inventory.list_transactions(context.scope, 73)
   end
 
-  test "a caller-named privileged actor is refused without the authenticated principal",
-       context do
+  test "an override requires an Authz actor in the execution's company", context do
     authz_tables!()
     grant_override!(context, 9)
     {order, attrs} = held_order(context)
 
-    assert {:error, :hold_override_unauthenticated} =
+    assert {:error, :invalid_hold_override} =
              complete(
                context,
                order,
                Map.put(attrs, :hold_override, %{actor_type: "user", actor_id: 9, reason: "urgent"})
              )
 
-    principal = Authz.actor(:user, 10, context.scope, 73)
+    actor = Authz.actor(:user, 10, context.scope, 73)
 
     assert {:error, :invalid_hold_override} =
              complete(
                context,
                order,
-               Map.put(attrs, :hold_override, %{actor: principal, actor_id: 9, reason: "urgent"})
+               Map.put(attrs, :hold_override, %{actor: actor, actor_id: 9, reason: "urgent"})
              )
 
     other_company = Authz.actor(:user, 9, context.scope, 74)
@@ -255,6 +268,7 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
                Map.put(attrs, :hold_override, %{actor: other_company, reason: "urgent"})
              )
 
+    assert override_decisions() == 0
     assert [] = Repo.all(Bilimbi.Factory.ProductionExecution.HoldOverride)
     assert [] = Repo.all(Bilimbi.Factory.ProductionExecution.Schemas.Execution)
   end
@@ -272,6 +286,7 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
              ProductionExecution.list_hold_overrides(context.scope, 73, completed.id)
 
     assert override.actor_type == "user" and override.actor_id == 9
+    assert override.recorded_by_type == "user" and override.recorded_by_id == 9
     assert override.source == "live" and is_nil(override.evidence)
     assert override.reason == "Batch release"
     assert override.identity_id == hd(attrs.inputs).identity_id
@@ -283,6 +298,7 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
 
     assert transaction.kind == :transform
     assert {:ok, ^completed} = complete(context, order, attrs)
+    assert override_decisions() == 1
 
     assert_raise Postgrex.Error, fn ->
       SQL.query!(
@@ -293,18 +309,23 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
     end
   end
 
-  test "an imported override carries its source evidence and is recorded as imported",
+  test "an imported override records its historical approver and time, not the importer",
        context do
     authz_tables!()
     grant_override!(context, 9)
     {order, attrs} = held_order(context)
     importer = Authz.actor(:user, 9, context.scope, 73)
+    historical_at = DateTime.add(attrs.completed_at, -60)
 
     assert {:error, :invalid_hold_override} =
              complete(
                context,
                order,
-               Map.put(attrs, :hold_override, %{actor: importer, reason: "Batch release"}),
+               Map.put(attrs, :hold_override, %{
+                 actor: importer,
+                 reason: "Batch release",
+                 evidence: "Legacy MES override 4411"
+               }),
                :import
              )
 
@@ -312,7 +333,9 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
       Map.put(attrs, :hold_override, %{
         actor: importer,
         reason: "Batch release",
-        evidence: "Legacy MES override 4411 by QA lead"
+        evidence: "Legacy MES override 4411 by QA lead",
+        occurred_at: historical_at,
+        approver: %{type: "user", id: 12}
       })
 
     assert {:error, :invalid_hold_override} = complete(context, order, attrs, :live)
@@ -323,6 +346,31 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
 
     assert override.source == "import"
     assert override.evidence == "Legacy MES override 4411 by QA lead"
+    assert override.actor_type == "user" and override.actor_id == 12
+    assert override.recorded_by_type == "user" and override.recorded_by_id == 9
+    assert DateTime.compare(override.occurred_at, historical_at) == :eq
+  end
+
+  test "an imported override without a named approver records none", context do
+    authz_tables!()
+    grant_override!(context, 9)
+    {order, attrs} = held_order(context)
+
+    attrs =
+      Map.put(attrs, :hold_override, %{
+        actor: Authz.actor(:user, 9, context.scope, 73),
+        reason: "Batch release",
+        evidence: "Legacy MES override 4412",
+        occurred_at: DateTime.add(attrs.completed_at, -60)
+      })
+
+    assert {:ok, completed} = complete(context, order, attrs, :import)
+
+    assert {:ok, [override]} =
+             ProductionExecution.list_hold_overrides(context.scope, 73, completed.id)
+
+    assert is_nil(override.actor_type) and is_nil(override.actor_id)
+    assert override.recorded_by_id == 9
   end
 
   test "one override decision is logged per affected unit", context do
@@ -345,12 +393,7 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
     assert {:ok, [_override]} =
              ProductionExecution.list_hold_overrides(context.scope, 73, completed.id)
 
-    assert %{rows: [[1]]} =
-             SQL.query!(
-               Repo,
-               "SELECT count(*) FROM base_authz_decision_logs WHERE capability = $1",
-               ["factory.production-execution.material-hold.override"]
-             )
+    assert override_decisions() == 1
   end
 
   test "failed posting leaves neither override nor consumption", context do
