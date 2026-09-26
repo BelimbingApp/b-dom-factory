@@ -24,6 +24,9 @@ and phases are Bilimbi's `docs/plans/factory/0000-factory-domain.md` and
 - Namespaces are `Bilimbi.Factory.<Module>` with OTP app
   `:bilimbi_factory_<folder>`, matching Base and Core's
   `Bilimbi.<Container>.<Module>` shape that the graph-edge check keys on.
+- Use `ProductDefinition.select_revisions/5` for an order's exact definition
+  selection; its facade validates Inventory references through Inventory's public
+  API. Do not read either module's private tables from another module.
 - Mount a real copy (clone or `rsync`), not a symlink: `mix.exs` locates the
   Platform with `__DIR__`, which resolves through a symlink to this checkout.
 - A `schema_contract` describes only `:compatible_baseline` tables (Belimbing's
