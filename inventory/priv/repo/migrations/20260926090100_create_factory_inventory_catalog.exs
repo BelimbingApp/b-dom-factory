@@ -99,11 +99,15 @@ defmodule Bilimbi.Factory.Inventory.Migrations.CreateCatalog do
 
     create constraint(
              :factory_inventory_unit_conversions,
-             :factory_inventory_unit_conversions_factor_positive, check: "factor > 0")
+             :factory_inventory_unit_conversions_factor_positive,
+             check: "factor > 0"
+           )
 
     create constraint(
              :factory_inventory_unit_conversions,
-             :factory_inventory_unit_conversions_version_positive, check: "version > 0")
+             :factory_inventory_unit_conversions_version_positive,
+             check: "version > 0"
+           )
   end
 
   def down do
