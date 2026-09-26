@@ -101,7 +101,7 @@ defmodule Bilimbi.Factory.Inventory.TestFixtures do
         company_id bigint NOT NULL REFERENCES companies (id),
         kind varchar(32) NOT NULL,
         request_id varchar(255) NOT NULL,
-        request_fingerprint bytea NOT NULL,
+        request_fingerprint varchar(64) NOT NULL,
         actor_type varchar(64) NOT NULL,
         actor_id bigint NOT NULL,
         evidence text NOT NULL,

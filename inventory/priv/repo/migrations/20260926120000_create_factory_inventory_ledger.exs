@@ -18,7 +18,7 @@ defmodule Bilimbi.Factory.Inventory.Migrations.CreateLedger do
       add :company_id, company_reference(:factory_inventory_transactions), null: false
       add :kind, :string, size: 32, null: false
       add :request_id, :string, null: false
-      add :request_fingerprint, :binary, null: false
+      add :request_fingerprint, :string, size: 64, null: false
       add :actor_type, :string, size: 64, null: false
       add :actor_id, :bigint, null: false
       add :evidence, :text, null: false

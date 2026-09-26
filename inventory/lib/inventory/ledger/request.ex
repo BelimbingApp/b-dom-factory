@@ -260,6 +260,7 @@ defmodule Bilimbi.Factory.Inventory.Ledger.Request do
   defp fingerprint(kind, changes, lists) do
     term = {kind, normalize(changes), normalize(lists)}
     :crypto.hash(:sha256, :erlang.term_to_binary(term, [:deterministic]))
+    |> Base.encode16(case: :lower)
   end
 
   defp normalize(%Decimal{} = decimal), do: decimal |> Decimal.normalize() |> Decimal.to_string()

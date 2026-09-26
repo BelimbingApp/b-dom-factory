@@ -14,7 +14,7 @@ defmodule Bilimbi.Factory.Inventory.Schemas.Transaction do
     field :company_id, :id
     field :kind, :string
     field :request_id, :string
-    field :request_fingerprint, :binary
+    field :request_fingerprint, :string
     field :actor_type, :string
     field :actor_id, :integer
     field :evidence, :string
