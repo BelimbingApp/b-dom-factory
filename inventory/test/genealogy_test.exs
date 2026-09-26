@@ -167,6 +167,29 @@ defmodule Bilimbi.Factory.Inventory.GenealogyTest do
 
     assert length(forward.links) == 3
 
+    assert {:ok, trim_use} =
+             Inventory.record_consumption(
+               scope,
+               73,
+               request("GEN-TRIM-USE",
+                 lines: [
+                   %{
+                     item_id: trim.id,
+                     location_id: slitter.id,
+                     quantity: 5,
+                     observation: "measured",
+                     identity_id: trim_entry.identity_id
+                   }
+                 ]
+               )
+             )
+
+    assert {:ok, source_draws} = Inventory.list_identity_draws(scope, 73, source_id)
+    assert Enum.map(source_draws, & &1.id) == [transform.id]
+    assert {:ok, trim_draws} = Inventory.list_identity_draws(scope, 73, trim_entry.identity_id)
+    assert Enum.map(trim_draws, & &1.id) == [trim_use.id]
+    assert {:error, :identity_not_found} = Inventory.list_identity_draws(scope, 74, source_id)
+
     assert {:error, :insufficient_identity_stock} =
              Inventory.record_consumption(
                scope,

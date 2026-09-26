@@ -83,6 +83,27 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
     |> then(&read_models(company_id, &1))
   end
 
+  @doc "Reads the consumptions and transforms that drew the identity, in ID order."
+  @spec draws(pos_integer(), pos_integer()) :: [Transaction.t()]
+  def draws(company_id, identity_id) do
+    from(transaction in Schemas.Transaction,
+      where:
+        transaction.company_id == ^company_id and
+          transaction.kind in ["consumption", "transform"] and
+          transaction.id in subquery(
+            from(entry in Schemas.Entry,
+              where:
+                entry.company_id == ^company_id and entry.role == "stock" and
+                  entry.identity_id == ^identity_id and entry.native_quantity < 0,
+              select: entry.transaction_id
+            )
+          ),
+      order_by: [asc: transaction.id]
+    )
+    |> Repo.all()
+    |> then(&read_models(company_id, &1))
+  end
+
   @spec list(pos_integer(), keyword()) :: [Transaction.t()]
   def list(company_id, opts) do
     query =

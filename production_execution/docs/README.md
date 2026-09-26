@@ -26,8 +26,9 @@ both live commands (`source: :live`) and historical imports
   time and gets a separate recorded time.
 - `inputs`, `outputs`: actual lines with `item_id`, `location_id`,
   positive `quantity`, `observation`, and optional `unit_id`,
-  `conversion_version`, `evidence`, and `output_role`. Items must belong to
-  the selected operation. Inventory validates stock, units, and conversions.
+  `conversion_version`, `evidence`, `output_role`, `identity_id` on inputs,
+  and `identity` on outputs. Items must belong to the selected operation.
+  Inventory validates stock, units, and conversions.
 - `variance`: optional Inventory transform evidence with `evidence` and
   `reconciliation_basis`; required when actual inputs and outputs differ.
   Accepted only when the execution has both inputs and outputs.
@@ -35,4 +36,18 @@ both live commands (`source: :live`) and historical imports
 The facade posts through Inventory's named production functions, carrying
 opaque execution, order/batch, and resource references. Execution and material
 effects use one Repo transaction, so neither survives a failure in the other.
-Material holds and overrides and the production trace view are later phases.
+Material holds and overrides are a later phase.
+
+## Production trace
+
+`trace_backward(scope, company_id, identity_id)` and
+`trace_forward(scope, company_id, identity_id)` return `%{material: genealogy,
+runs: runs}`. `material` is Inventory's public trace result: root identity,
+visited identities, transform links, and source receipts. Each run contains
+the execution ID, order or batch, operation code, resource, timing, source,
+and Inventory transaction ID. Runs are ordered by completion time and ID.
+The view joins executions by the Inventory transaction IDs on visited
+identities and links; a forward trace also joins the consumptions and
+transforms that drew a visited identity (`Inventory.list_identity_draws/3`),
+so a run without an identified output still appears. Inventory alone stores
+material ancestry.

@@ -29,7 +29,7 @@ company is reported as not found. Results are read models (`Item`, `Unit`,
 | Ledger postings | `record_receipt/3`, `record_transfer/3`, `record_consumption/3`, `record_correction/3` |
 | Production postings | `record_output/4`, `record_transform/4`, `record_production_consumption/4`, `record_production_correction/4` |
 | Ledger reads | `get_transaction/3`, `list_transactions/3` |
-| Lot and unit genealogy | `get_identity/3`, `trace_backward/3`, `trace_forward/3` |
+| Lot and unit genealogy | `get_identity/3`, `trace_backward/3`, `trace_forward/3`, `list_identity_draws/3` |
 | Posting authority | `posting_authority_registered?/1` |
 
 - **Material identity.** An item becomes a stocked material once, with a
@@ -87,9 +87,11 @@ item, and source transaction.
 `trace_backward/3` and `trace_forward/3` walk the transform links between
 identities across any number of transformations. They return the root identity,
 the visited identities, `{input_identity_id, output_identity_id,
-transaction_id}` links, and source receipt transactions in `receipts`. Reads
-remain scoped to one live company. Unidentified material remains supported for
-workflows that do not track lots or individual units.
+transaction_id}` links, and source receipt transactions in `receipts`.
+`list_identity_draws/3` lists the consumptions and transforms that drew an
+identity, including consumption that created no link. Reads remain scoped to
+one live company. Unidentified material remains supported for workflows that do
+not track lots or individual units.
 
 ## Posting authority
 
