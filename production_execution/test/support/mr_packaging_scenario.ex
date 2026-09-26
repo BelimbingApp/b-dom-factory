@@ -6,6 +6,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenario do
   """
 
   alias Bilimbi.Base.Authz
+  alias Bilimbi.Base.Tenancy.Authentication
   alias Bilimbi.Base.Repo
   alias Bilimbi.Base.Authz.{ContributionValidator}
   alias Bilimbi.Base.ModuleRegistry.ContributionRegistry
@@ -178,7 +179,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenario do
     resources = Map.new(routed, &{&1.code, hd(&1.allowed_resource_ids)})
 
     config = %{
-      scope: scope,
+      scope: Authentication.sign_in(scope, 9, @company),
       items: items,
       locations: locations,
       order: order,
@@ -260,8 +261,6 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenario do
         %{evidence: "Lamination weigh", reconciliation_basis: "1 kg representative process loss"}
       )
 
-    actor = Authz.actor(:user, 9, scope, @company)
-
     {lam_a, lam_a_tx} =
       run!(
         config,
@@ -274,7 +273,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenario do
         ],
         [line(items["LAMINATE"], locations.convert, 49, "measured", "LAM-A", "unit")],
         %{evidence: "Lamination weigh", reconciliation_basis: "1 kg representative process loss"},
-        %{actor: actor, reason: "Representative supervised release"}
+        %{reason: "Representative supervised release"}
       )
 
     {lam_b, lam_b_tx} =

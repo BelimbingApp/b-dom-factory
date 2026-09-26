@@ -5,9 +5,9 @@ defmodule Bilimbi.Factory.ProductionExecution.HoldOverride do
   `actor_*` is the approver: the authorized principal for a live override, or
   the historical approver from an import's source evidence (nil when the source
   names none). `recorded_by_*` is the principal Base Authz authorized to record
-  it. Both are caller-asserted until Bilimbi's `Scope` carries the
-  authenticated actor. `occurred_at` is when the override was made; for an
-  import, the historical time from the source.
+  it: always the Scope's authenticated user, who is also the approver of a live
+  override. `occurred_at` is when the override was made; for an import, the
+  historical time from the source.
   """
   use Ecto.Schema
   import Ecto.Changeset

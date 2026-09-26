@@ -42,19 +42,20 @@ both live commands (`source: :live`) and historical imports
   mismatched, or future source is refused. Inventory verifies that the named
   identity still holds the consumed quantity at the location. An identified
   transform input also requires identified outputs.
-- For early consumption, provide `hold_override` with `actor`, a
-  `Bilimbi.Base.Authz.Actor` in the scope's tenant and the execution's
-  company, and a nonblank `reason`. Base Authz must grant
-  `factory.production-execution.material-hold.override` to that actor. The
-  decision runs before the posting transaction, so a refused attempt keeps
-  its Authz decision log. Bilimbi's `Scope` does not yet carry an
-  authenticated actor, so this principal is caller-asserted until it does.
-- A live override records the actor as both approver (`actor_*`) and
-  recorder (`recorded_by_*`), timed when authorized. An import also supplies
-  the source `evidence`, the historical `occurred_at` (not after completion),
-  and optionally the historical `approver` (`type`, `id`, and an agent's
-  `acting_for_user_id`); its approver is null when the source names none,
-  and the importing actor is recorded only in `recorded_by_*`.
+- For early consumption, provide `hold_override` with a nonblank `reason`.
+  The Scope must carry an authenticated user in the execution's company, with
+  the `factory.production-execution.material-hold.override` capability; a
+  system Scope is refused, and so is an impersonated session
+  (`:override_refused_under_impersonation`). The decision runs before the
+  posting transaction, so a refused attempt keeps its Authz decision log.
+  Callers cannot name the recorder, or a live approver, in the override data.
+- A live override records the Scope's authenticated user as both approver
+  (`actor_*`) and recorder (`recorded_by_*`), timed when authorized. An import
+  also supplies source `evidence`, the historical `occurred_at` (not after
+  completion), and optionally the historical `approver` (`type`, `id`, and an
+  agent's `acting_for_user_id`); its approver is null when the source names
+  none, is never used for the permission check, and the Scope's user is
+  recorded only in `recorded_by_*`.
   `list_hold_overrides/3` returns the source, approver, recorder, time,
   reason, evidence, identity, execution, and Inventory transaction.
 
