@@ -126,6 +126,12 @@ jobs:
       - name: Verify declared module-graph edges
         run: elixir .github/scripts/graph_edges.exs
 
+      # Inventory's posting boundary reads every compiled module of the graph,
+      # which exists only once the whole mounted workspace is compiled.
+      - name: Verify Inventory's posting boundary
+        working-directory: bilimbi/apps/domains/factory/inventory
+        run: mix test --only compiled_graph
+
       - name: Enforce greppable AGENTS.md mandates
         run: .github/scripts/mandates.sh
 

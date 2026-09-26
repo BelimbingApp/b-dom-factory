@@ -41,13 +41,18 @@ defmodule Bilimbi.Factory.Inventory.PostingAuthorityTest do
       end
     end
 
-    test "a refused declaration fails the registry rather than being ignored" do
+    test "a refused declaration fails Inventory's boot, not its postings" do
       Application.put_env(:bilimbi_core_company, :posting_authority, Bilimbi.Core.Company)
-      on_exit(fn -> Application.delete_env(:bilimbi_core_company, :posting_authority) end)
 
-      assert_raise ArgumentError, ~r/bilimbi_core_company declares/, fn ->
-        Inventory.posting_authority_registered?(TestPostingAuthority)
-      end
+      on_exit(fn ->
+        Application.delete_env(:bilimbi_core_company, :posting_authority)
+        {:ok, _started} = Application.ensure_all_started(:bilimbi_factory_inventory)
+      end)
+
+      :ok = Application.stop(:bilimbi_factory_inventory)
+
+      assert {:error, reason} = Application.start(:bilimbi_factory_inventory)
+      assert inspect(reason) =~ "bilimbi_core_company declares"
     end
 
     test "names no module that its application does not declare" do
@@ -103,23 +108,26 @@ defmodule Bilimbi.Factory.Inventory.PostingAuthorityTest do
           lines: [%{item_id: sheet.id, location_id: line.id, quantity: 5, observation: "counted"}]
         )
 
+      assert {:error, :unregistered_posting_authority} =
+               Inventory.record_consumption(scope, 73, consumption)
+
       for authority <- [
-            [],
-            [authority: Bilimbi.Factory.ProductionExecution],
-            [authority: Bilimbi.Factory.Inventory.Ledger],
-            [authority: inspect(TestPostingAuthority)]
+            nil,
+            Bilimbi.Factory.ProductionExecution,
+            Bilimbi.Factory.Inventory.Ledger,
+            inspect(TestPostingAuthority)
           ] do
         assert {:error, :unregistered_posting_authority} =
-                 Inventory.record_consumption(scope, 73, consumption, authority)
+                 Inventory.record_production_consumption(scope, 73, consumption, authority)
 
         assert {:error, :unregistered_posting_authority} =
                  Inventory.record_output(scope, 73, output, authority)
       end
 
-      authority = [authority: TestPostingAuthority]
+      authority = TestPostingAuthority
 
       assert {:ok, %Transaction{kind: :consumption, posting_authority: posted_by}} =
-               Inventory.record_consumption(scope, 73, consumption, authority)
+               Inventory.record_production_consumption(scope, 73, consumption, authority)
 
       assert posted_by == inspect(TestPostingAuthority)
 
@@ -167,7 +175,7 @@ defmodule Bilimbi.Factory.Inventory.PostingAuthorityTest do
 
     test "correcting a production posting needs the authority too", context do
       %{scope: scope, sheet: sheet, slitter: line} = context
-      authority = [authority: TestPostingAuthority]
+      authority = TestPostingAuthority
 
       {:ok, output} =
         Inventory.record_output(
@@ -193,8 +201,16 @@ defmodule Bilimbi.Factory.Inventory.PostingAuthorityTest do
       assert {:error, :unregistered_posting_authority} =
                Inventory.record_correction(scope, 73, correction)
 
+      assert {:error, :unregistered_posting_authority} =
+               Inventory.record_production_correction(
+                 scope,
+                 73,
+                 correction,
+                 Bilimbi.Factory.ProductionExecution
+               )
+
       assert {:ok, %Transaction{kind: :correction}} =
-               Inventory.record_correction(scope, 73, correction, authority)
+               Inventory.record_production_correction(scope, 73, correction, authority)
     end
   end
 end

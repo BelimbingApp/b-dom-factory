@@ -40,11 +40,11 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
   @spec post(pos_integer(), Transaction.kind(), map(), keyword()) ::
           {:ok, Transaction.t()} | {:error, error()}
   def post(company_id, kind, request, opts) do
-    opts = Keyword.validate!(opts, authority: nil)
+    opts = Keyword.validate!(opts, [:authority])
     now = DateTime.utc_now(:microsecond)
 
     with {:ok, request} <- Request.validate(kind, request, now),
-         {:ok, authority} <- authority(opts[:authority]) do
+         {:ok, authority} <- authority(Keyword.fetch(opts, :authority)) do
       Repo.transaction(fn ->
         case record(company_id, kind, request, authority) do
           {:ok, transaction_id} -> read!(company_id, transaction_id)
@@ -113,9 +113,11 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
   # Posting
   # ============================================================================
 
-  defp authority(nil), do: {:ok, nil}
+  # A production posting names its authority, which must be declared; any
+  # other posting names none and may not carry production context.
+  defp authority(:error), do: {:ok, nil}
 
-  defp authority(module) do
+  defp authority({:ok, module}) do
     if PostingAuthority.registered?(module),
       do: {:ok, module},
       else: {:error, :unregistered_posting_authority}

@@ -29,7 +29,8 @@ company is reported as not found. Results are read models (`Item`, `Unit`,
 | Material identity | `register_material/4`, `get_material/3` |
 | Conversions | `define_conversion/5`, `list_conversions/3`, `get_conversion/5` |
 | Stock position | `get_stock_position/4` |
-| Ledger postings | `record_receipt/4`, `record_transfer/4`, `record_consumption/4`, `record_output/4`, `record_correction/4`, `record_transform/4` |
+| Ledger postings | `record_receipt/3`, `record_transfer/3`, `record_consumption/3`, `record_correction/3` |
+| Production postings | `record_output/4`, `record_transform/4`, `record_production_consumption/4`, `record_production_correction/4` |
 | Ledger reads | `get_transaction/3`, `list_transactions/3` |
 | Posting authority | `posting_authority_registered?/1` |
 
@@ -76,10 +77,14 @@ do not account for. The `record_*` docs on the facade define each request.
 ## Posting authority
 
 Receipts, transfers, and ordinary consumption and corrections are open to
-any caller. Output, transforms, a posting with operation execution, order or
+any caller, through `record_receipt/3`, `record_transfer/3`,
+`record_consumption/3`, and `record_correction/3`. Those refuse production
+context as `:unregistered_posting_authority`: operation execution, order or
 batch, or Work Centre/Resource context, and a correction of a posting that
-needed an authority are refused as `:unregistered_posting_authority` unless
-they carry `authority:` naming a declared posting authority.
+had an authority. Production postings go through `record_output/4`,
+`record_transform/4`, `record_production_consumption/4`, and
+`record_production_correction/4`, each naming its authority, which must be
+declared.
 
 The registry is the composition metadata; nothing registers at runtime, and
 Inventory names no authority. A module is declared by its own OTP
@@ -92,13 +97,18 @@ env:
     [posting_authority: Bilimbi.Factory.ProductionExecution]
 ```
 
-Inventory accepts a declaration only from a Domain module of its own
-container in the validated graph, naming one of that application's own
-modules, and raises on any other. The BEAM cannot prove which module calls,
-so `test/posting_boundary_test.exs` fails when any compiled module other
-than a declared authority calls `record_output` or `record_transform`.
-Production Execution declares nothing yet; the tests declare
+Inventory builds the registry once at application start. It accepts a
+declaration only from a Domain module of its own container in the validated
+graph, naming one of that application's own modules; any other fails boot.
+Production Execution declares nothing yet; Inventory's test build declares
 `TestPostingAuthority`.
+
+The BEAM cannot prove which module calls, so `test/posting_boundary_test.exs`
+checks the compiled graph: it fails when a module other than a declared
+authority calls a production posting, or when any module outside Inventory
+calls one Inventory keeps internal (`@moduledoc false`, such as `Ledger`).
+It needs the whole mounted graph compiled, so a module-folder `mix test`
+excludes it; CI runs it with `mix test --only compiled_graph`.
 
 ## Persistence
 

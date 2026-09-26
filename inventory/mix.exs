@@ -30,10 +30,20 @@ defmodule Bilimbi.Factory.Inventory.MixProject do
 
   def application do
     [
+      mod: {Bilimbi.Factory.Inventory.Application, []},
       extra_applications: [:logger],
-      env: Bilimbi.Base.ModuleRegistry.MixDiscovery.application_env(__DIR__)
+      env:
+        Bilimbi.Base.ModuleRegistry.MixDiscovery.application_env(__DIR__) ++
+          posting_authority(Mix.env())
     ]
   end
+
+  # Production Execution declares no posting authority yet, so the tests
+  # declare one the way it will.
+  defp posting_authority(:test),
+    do: [posting_authority: Bilimbi.Factory.Inventory.TestPostingAuthority]
+
+  defp posting_authority(_env), do: []
 
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_env), do: ["lib"]

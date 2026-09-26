@@ -315,8 +315,15 @@ defmodule Bilimbi.Factory.Inventory do
 
   @doc """
   Whether `module` is a production posting authority, as its OTP application
-  declares in the composition metadata. Only a Domain module of Inventory's
-  own container may declare one; see `Bilimbi.Factory.Inventory.PostingAuthority`.
+  declares in the composition metadata:
+
+      env:
+        Bilimbi.Base.ModuleRegistry.MixDiscovery.application_env(__DIR__) ++
+          [posting_authority: Bilimbi.Factory.ProductionExecution]
+
+  Only a Domain module of Inventory's own container may declare one, naming
+  one of its own modules; any other declaration fails Inventory's boot. The
+  registry is built once at boot, and nothing registers at runtime.
   """
   @spec posting_authority_registered?(module()) :: boolean()
   def posting_authority_registered?(module) when is_atom(module),
@@ -349,36 +356,48 @@ defmodule Bilimbi.Factory.Inventory do
       version, and the entry names that basis.
 
   A posting that carries `operation_execution`, `order_or_batch`, or
-  `work_centre` context is production context and needs `authority: module`
-  naming a declared posting authority (see
-  `posting_authority_registered?/1`); without one it is
+  `work_centre` context is production context. Only the production postings
+  (`record_output/4`, `record_transform/4`,
+  `record_production_consumption/4`, and `record_production_correction/4`)
+  accept it; each names its `authority`, a declared posting authority (see
+  `posting_authority_registered?/1`). Anything else is
   `{:error, :unregistered_posting_authority}`.
   """
-  @spec record_receipt(Scope.t(), pos_integer(), map(), keyword()) :: posting_result()
-  def record_receipt(%Scope{} = scope, company_id, request, opts \\ []),
-    do: post(scope, company_id, :receipt, request, opts)
+  @spec record_receipt(Scope.t(), pos_integer(), map()) :: posting_result()
+  def record_receipt(%Scope{} = scope, company_id, request),
+    do: post(scope, company_id, :receipt, request, [])
 
   @doc """
   Moves material between locations. Each line has `from_location_id` and
   `to_location_id` instead of `location_id`; the source must hold the quantity.
   """
-  @spec record_transfer(Scope.t(), pos_integer(), map(), keyword()) :: posting_result()
-  def record_transfer(%Scope{} = scope, company_id, request, opts \\ []),
-    do: post(scope, company_id, :transfer, request, opts)
+  @spec record_transfer(Scope.t(), pos_integer(), map()) :: posting_result()
+  def record_transfer(%Scope{} = scope, company_id, request),
+    do: post(scope, company_id, :transfer, request, [])
 
   @doc """
   Records material used from stock. The location must hold the quantity, so
   two callers cannot consume the same material. Consumption against a
-  production order is production context and needs a posting authority.
+  production order is production context; see
+  `record_production_consumption/4`.
   """
-  @spec record_consumption(Scope.t(), pos_integer(), map(), keyword()) :: posting_result()
-  def record_consumption(%Scope{} = scope, company_id, request, opts \\ []),
-    do: post(scope, company_id, :consumption, request, opts)
+  @spec record_consumption(Scope.t(), pos_integer(), map()) :: posting_result()
+  def record_consumption(%Scope{} = scope, company_id, request),
+    do: post(scope, company_id, :consumption, request, [])
 
-  @doc "Records production output into stock. Always needs a posting authority."
-  @spec record_output(Scope.t(), pos_integer(), map(), keyword()) :: posting_result()
-  def record_output(%Scope{} = scope, company_id, request, opts \\ []),
-    do: post(scope, company_id, :output, request, opts)
+  @doc """
+  Records consumption that may carry production context, posted by
+  `authority`, a declared posting authority.
+  """
+  @spec record_production_consumption(Scope.t(), pos_integer(), map(), module()) ::
+          posting_result()
+  def record_production_consumption(%Scope{} = scope, company_id, request, authority),
+    do: post(scope, company_id, :consumption, request, authority: authority)
+
+  @doc "Records production output into stock, posted by `authority`."
+  @spec record_output(Scope.t(), pos_integer(), map(), module()) :: posting_result()
+  def record_output(%Scope{} = scope, company_id, request, authority),
+    do: post(scope, company_id, :output, request, authority: authority)
 
   @doc """
   Corrects a recorded transaction with a new one; the original is never
@@ -386,16 +405,26 @@ defmodule Bilimbi.Factory.Inventory do
 
   Needs `corrects_transaction_id` and a `reason`. Each line's `quantity` is a
   signed adjustment at its location: negative removes stock, positive adds it.
-  Correcting a transaction that needed a posting authority needs one too.
+  A transaction that needed a posting authority is corrected through
+  `record_production_correction/4`.
   """
-  @spec record_correction(Scope.t(), pos_integer(), map(), keyword()) :: posting_result()
-  def record_correction(%Scope{} = scope, company_id, request, opts \\ []),
-    do: post(scope, company_id, :correction, request, opts)
+  @spec record_correction(Scope.t(), pos_integer(), map()) :: posting_result()
+  def record_correction(%Scope{} = scope, company_id, request),
+    do: post(scope, company_id, :correction, request, [])
+
+  @doc """
+  Corrects any recorded transaction, including one that needed a posting
+  authority, posted by `authority`.
+  """
+  @spec record_production_correction(Scope.t(), pos_integer(), map(), module()) ::
+          posting_result()
+  def record_production_correction(%Scope{} = scope, company_id, request, authority),
+    do: post(scope, company_id, :correction, request, authority: authority)
 
   @doc """
   Records a material transform: `inputs` drawn from stock and `outputs` put
-  into stock, committed with their genealogy as one transaction. Always needs
-  a posting authority.
+  into stock, committed with their genealogy as one transaction, posted by
+  `authority`.
 
   Input and output lines take the receipt line fields; an output may add an
   opaque `output_role`, such as finished, trim, or waste. Every input and
@@ -407,9 +436,9 @@ defmodule Bilimbi.Factory.Inventory do
   variance entry; without it the transform is `{:error, :variance_required}`,
   and a variance with no difference is `{:error, :no_variance}`.
   """
-  @spec record_transform(Scope.t(), pos_integer(), map(), keyword()) :: posting_result()
-  def record_transform(%Scope{} = scope, company_id, request, opts \\ []),
-    do: post(scope, company_id, :transform, request, opts)
+  @spec record_transform(Scope.t(), pos_integer(), map(), module()) :: posting_result()
+  def record_transform(%Scope{} = scope, company_id, request, authority),
+    do: post(scope, company_id, :transform, request, authority: authority)
 
   @spec get_transaction(Scope.t(), pos_integer(), pos_integer()) ::
           {:ok, Transaction.t()} | {:error, :company_not_found | :transaction_not_found}

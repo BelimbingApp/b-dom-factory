@@ -4,8 +4,8 @@ defmodule Bilimbi.Factory.Inventory.TestPostingAuthority do
   application, so it sits inside the Factory Domain container the way
   Production Execution does.
 
-  Production Execution declares no authority yet, so `test_helper.exs`
-  declares this one in Inventory's application metadata, where a real
-  authority's `mix.exs` puts its own.
+  Production Execution declares no authority yet, so Inventory's `mix.exs`
+  declares this one in its test application metadata, the way a real
+  authority's `mix.exs` declares its own.
   """
 end

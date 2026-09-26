@@ -1,49 +1,33 @@
 defmodule Bilimbi.Factory.Inventory.PostingAuthority do
-  @moduledoc """
-  The production posting-authority registry, as declared by the composition
-  metadata.
+  @moduledoc false
 
-  A module is a posting authority when its OTP application declares it beside
-  the descriptor metadata composition writes into the application resource.
-  Module discovery accepts no key beyond the descriptor's own, so the
-  declaration sits in the application's `mix.exs`:
+  # The production posting-authority registry, as declared by the composition
+  # metadata (see `inventory/docs/README.md`). Inventory builds it once at
+  # application start from the loaded applications and caches it; nothing
+  # registers at runtime, and Inventory names no authority.
 
-      def application do
-        [
-          extra_applications: [:logger],
-          env:
-            Bilimbi.Base.ModuleRegistry.MixDiscovery.application_env(__DIR__) ++
-              [posting_authority: Bilimbi.Factory.ProductionExecution]
-        ]
-      end
+  @registry {__MODULE__, :registry}
 
-  Inventory reads the registry from the loaded applications. It accepts a
-  declaration only from a Domain module of its own container in the validated
-  composition graph, naming one of that application's own modules, and raises
-  on any other. Nothing registers at runtime, and Inventory names no
-  authority.
-
-  The BEAM cannot prove which module calls, so a production posting names its
-  authority, and Inventory's `posting_boundary_test.exs` fails when a compiled
-  module other than a declared authority calls `record_output` or
-  `record_transform`.
-  """
-
-  @doc false
   @spec registered?(term()) :: boolean()
-  def registered?(module) when is_atom(module) and module != nil, do: module in registry()
+  def registered?(module) when is_atom(module) and module != nil,
+    do: module in :persistent_term.get(@registry)
+
   def registered?(_other), do: false
 
-  @doc false
-  @spec registry() :: [module()]
-  def registry do
+  @spec install!() :: :ok
+  def install!, do: :persistent_term.put(@registry, build!())
+
+  # Accepts a declaration only from a Domain module of Inventory's own
+  # container in the validated composition graph, naming one of that
+  # application's own modules, and raises on any other.
+  @spec build!() :: [module()]
+  def build! do
     for {app, _description, _version} <- Application.loaded_applications(),
         env = Application.get_all_env(app),
         Keyword.has_key?(env, :posting_authority),
         do: declared!(app, env, Application.spec(app, :modules) || [])
   end
 
-  @doc false
   @spec declared!(atom(), keyword(), [module()]) :: module()
   def declared!(app, env, modules) do
     # The descriptor is read directly rather than through

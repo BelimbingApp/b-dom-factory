@@ -45,6 +45,9 @@ and phases are Bilimbi's `docs/plans/factory/0000-factory-domain.md` and
   descriptor's own. Carry extra composition metadata in the module's
   `mix.exs` application env beside `MixDiscovery.application_env/1`, as a
   production posting authority is declared (`inventory/docs/README.md`).
+- `inventory/test/posting_boundary_test.exs`'s `:compiled_graph` test needs
+  the whole mounted graph compiled; a module-folder `mix test` excludes it,
+  and CI runs it with `mix test --only compiled_graph` after compiling.
 - Never commit a lock file here. Mounted builds share Bilimbi's ignored
   `.scratchpad/composition-lock/` overlay (`mix/composition_lock.exs`).
 - CI is `.github/workflows/ci.yml`; the Bilimbi revision it builds against is
