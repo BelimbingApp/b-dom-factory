@@ -10,8 +10,9 @@
 - Module-local tests use temporary tables in `test/execution_test.exs`.
   Mirror migration constraints there when persistence changes.
 - Use Inventory's public `trace_backward/3`, `trace_forward/3`, and
-  `list_identity_draws/3` for material ancestry and use, then join execution context by transaction ID as
-  `lib/production_execution/trace.ex` does; never keep another ancestry table.
+  `list_identity_draws/3` for material ancestry and use, then join execution
+  context by transaction ID as `lib/production_execution/trace.ex` does;
+  never keep another ancestry table.
 
 ## Maintaining this file
 

@@ -27,8 +27,8 @@ both live commands (`source: :live`) and historical imports
 - `inputs`, `outputs`: actual lines with `item_id`, `location_id`,
   positive `quantity`, `observation`, and optional `unit_id`,
   `conversion_version`, `evidence`, `output_role`, `identity_id` on inputs,
-  and `identity` on outputs. Items must belong to
-  the selected operation. Inventory validates stock, units, and conversions.
+  and `identity` on outputs. Items must belong to the selected operation.
+  Inventory validates stock, units, and conversions.
 - `variance`: optional Inventory transform evidence with `evidence` and
   `reconciliation_basis`; required when actual inputs and outputs differ.
   Accepted only when the execution has both inputs and outputs.
@@ -49,4 +49,5 @@ and Inventory transaction ID. Runs are ordered by completion time and ID.
 The view joins executions by the Inventory transaction IDs on visited
 identities and links; a forward trace also joins the consumptions and
 transforms that drew a visited identity (`Inventory.list_identity_draws/3`),
-so a run without an identified output still appears. Inventory alone stores material ancestry.
+so a run without an identified output still appears. Inventory alone stores
+material ancestry.

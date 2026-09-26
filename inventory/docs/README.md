@@ -89,9 +89,9 @@ identities across any number of transformations. They return the root identity,
 the visited identities, `{input_identity_id, output_identity_id,
 transaction_id}` links, and source receipt transactions in `receipts`.
 `list_identity_draws/3` lists the consumptions and transforms that drew an
-identity, including consumption that created no link. Reads
-remain scoped to one live company. Unidentified material remains supported for
-workflows that do not track lots or individual units.
+identity, including consumption that created no link. Reads remain scoped to
+one live company. Unidentified material remains supported for workflows that do
+not track lots or individual units.
 
 ## Posting authority
 
