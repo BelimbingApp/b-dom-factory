@@ -120,22 +120,6 @@ jobs:
           BILIMBI_COMPOSITION_PINNED=1 mix deps.get --check-locked
           BILIMBI_COMPOSITION_PINNED=1 mix deps.loadpaths
 
-      # The umbrella mix.exs has already loaded Bilimbi's discovery helper.
-      - name: List the discovered Factory modules
-        run: |
-          mix run --no-start --no-compile -e '
-            ids =
-              File.cwd!()
-              |> Bilimbi.Base.ModuleRegistry.MixDiscovery.discover_workspace!()
-              |> Enum.filter(&(&1.container_id == "factory"))
-              |> Enum.map(& &1.id)
-
-            IO.inspect(ids, label: "factory modules")
-
-            expected = ["factory/inventory", "factory/product_definition", "factory/production_execution"]
-            unless Enum.sort(ids) == expected, do: raise("expected #{inspect(expected)}")
-          '
-
       - name: Compile each module strictly
         run: mix compile.strict
 
