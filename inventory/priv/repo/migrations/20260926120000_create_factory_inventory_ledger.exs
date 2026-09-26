@@ -169,7 +169,8 @@ defmodule Bilimbi.Factory.Inventory.Migrations.CreateLedger do
     create constraint(
              :factory_inventory_transaction_entries,
              :factory_inventory_transaction_entries_quantities,
-             check: "native_quantity <> 0 AND (recorded_quantity IS NULL OR recorded_quantity > 0)"
+             check:
+               "native_quantity <> 0 AND (recorded_quantity IS NULL OR recorded_quantity > 0)"
            )
 
     create table(:factory_inventory_genealogy_links, primary_key: false) do

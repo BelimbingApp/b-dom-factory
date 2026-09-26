@@ -220,18 +220,19 @@ defmodule Bilimbi.Factory.Inventory.TestFixtures do
       $$
       """
     ] ++
-      (for table <- [
-            "factory_inventory_transactions",
-            "factory_inventory_transaction_entries",
-            "factory_inventory_genealogy_links"
-          ],
-          statement <- [
-            "CREATE TRIGGER #{table}_append_only BEFORE UPDATE OR DELETE ON #{table} " <>
-              "FOR EACH ROW EXECUTE FUNCTION pg_temp.factory_inventory_ledger_refuse_change()",
-            "CREATE TRIGGER #{table}_no_truncate BEFORE TRUNCATE ON #{table} " <>
-              "FOR EACH STATEMENT EXECUTE FUNCTION pg_temp.factory_inventory_ledger_refuse_change()"
-          ],
-          do: statement
+      for(
+        table <- [
+          "factory_inventory_transactions",
+          "factory_inventory_transaction_entries",
+          "factory_inventory_genealogy_links"
+        ],
+        statement <- [
+          "CREATE TRIGGER #{table}_append_only BEFORE UPDATE OR DELETE ON #{table} " <>
+            "FOR EACH ROW EXECUTE FUNCTION pg_temp.factory_inventory_ledger_refuse_change()",
+          "CREATE TRIGGER #{table}_no_truncate BEFORE TRUNCATE ON #{table} " <>
+            "FOR EACH STATEMENT EXECUTE FUNCTION pg_temp.factory_inventory_ledger_refuse_change()"
+        ],
+        do: statement
       ) ++
       for table <- ["factory_inventory_transactions", "factory_inventory_transaction_entries"] do
         "CREATE CONSTRAINT TRIGGER #{table}_balanced AFTER INSERT ON #{table} " <>
@@ -280,7 +281,11 @@ defmodule Bilimbi.Factory.Inventory.TestFixtures do
     {:ok, _conversion} = Inventory.define_conversion(scope, 73, coil.id, coil_unit.id, "250")
 
     [receiving, slitter, yard] =
-      for {code, name} <- [{"RCV", "Receiving"}, {"LINE-1", "Slitting line"}, {"YARD", "Scrap yard"}] do
+      for {code, name} <- [
+            {"RCV", "Receiving"},
+            {"LINE-1", "Slitting line"},
+            {"YARD", "Scrap yard"}
+          ] do
         {:ok, location} = Inventory.create_location(scope, 73, %{code: code, name: name})
         location
       end

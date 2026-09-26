@@ -58,7 +58,8 @@ defmodule Bilimbi.Factory.Inventory.Ledger.Request do
       |> validate_kind(kind)
 
     {changeset, lists} =
-      Enum.reduce(list_fields(kind), {changeset, %{}}, fn {field, line_kind}, {changeset, lists} ->
+      Enum.reduce(list_fields(kind), {changeset, %{}}, fn {field, line_kind},
+                                                          {changeset, lists} ->
         case lines(request, field, line_kind) do
           {:ok, lines} -> {changeset, Map.put(lists, field, lines)}
           {:error, errors} -> {Enum.reduce(errors, changeset, &add_error(&2, field, &1)), lists}
@@ -259,13 +260,17 @@ defmodule Bilimbi.Factory.Inventory.Ledger.Request do
   # A defaulted effective time is left out, so a retry that omits it matches.
   defp fingerprint(kind, changes, lists) do
     term = {kind, normalize(changes), normalize(lists)}
+
     :crypto.hash(:sha256, :erlang.term_to_binary(term, [:deterministic]))
     |> Base.encode16(case: :lower)
   end
 
   defp normalize(%Decimal{} = decimal), do: decimal |> Decimal.normalize() |> Decimal.to_string()
   defp normalize(%DateTime{} = at), do: DateTime.to_iso8601(at)
-  defp normalize(map) when is_map(map), do: Map.new(map, fn {k, v} -> {to_string(k), normalize(v)} end)
+
+  defp normalize(map) when is_map(map),
+    do: Map.new(map, fn {k, v} -> {to_string(k), normalize(v)} end)
+
   defp normalize(list) when is_list(list), do: Enum.map(list, &normalize/1)
   defp normalize(value), do: value
 end
