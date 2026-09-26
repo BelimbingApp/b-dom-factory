@@ -32,11 +32,28 @@ both live commands (`source: :live`) and historical imports
 - `variance`: optional Inventory transform evidence with `evidence` and
   `reconciliation_basis`; required when actual inputs and outputs differ.
   Accepted only when the execution has both inputs and outputs.
+- A Formula input with `material_hold_rule: %{"hours" => positive_integer}`
+  (or a Formula or routing `process_config.material_hold_rules` entry keyed by
+  the input item ID; the longest applicable minimum governs)
+  requires each matching actual input to name an Inventory `identity_id`.
+  Inventory resolves its immutable source transaction; the hold age runs from
+  that transaction's effective time to execution completion. A missing,
+  mismatched, or future source is refused. Inventory verifies that the named
+  identity still holds the consumed quantity at the location. An identified
+  transform input also requires identified outputs.
+- For early consumption, provide `hold_override` with `actor_type` (`"user"`
+  or `"agent"`), `actor_id`, and a nonblank `reason`. An agent also supplies
+  `acting_for_user_id`. Base Authz must grant
+  `factory.production-execution.material-hold.override` to that actor.
+  `list_hold_overrides/3` returns the actor, time, reason, identity,
+  execution, and Inventory transaction after commit.
 
 The facade posts through Inventory's named production functions, carrying
 opaque execution, order/batch, and resource references. Execution and material
 effects use one Repo transaction, so neither survives a failure in the other.
-Material holds and overrides are a later phase.
+The identity is the affected lot or physical unit. Create it on the Inventory
+receipt or production output, and preserve its ID on subsequent material
+movements.
 
 ## Production trace
 

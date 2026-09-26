@@ -17,6 +17,7 @@ defmodule Bilimbi.Factory.ProductionExecution.DescriptorTest do
     assert module.namespace == Bilimbi.Factory.ProductionExecution
 
     assert module.dependencies == [
+             "base/authz",
              "base/database",
              "base/module_registry",
              "base/tenancy",
