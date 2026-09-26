@@ -58,6 +58,9 @@ and phases are Bilimbi's `docs/plans/factory/0000-factory-domain.md` and
 - `inventory/test/posting_boundary_test.exs`'s `:compiled_graph` test needs
   the whole mounted graph compiled; a module-folder `mix test` excludes it,
   and CI runs it with `mix test --only compiled_graph` after compiling.
+- `.github/scripts/missing_dependency.sh` moves Factory out of the mounted
+  workspace and mounts a throwaway Extension, so CI runs it as the last step;
+  never commit that fixture or add a real Extension to prove the refusal.
 - Never commit a lock file here. Mounted builds share Bilimbi's ignored
   `.scratchpad/composition-lock/` overlay (`mix/composition_lock.exs`).
 - CI is `.github/workflows/ci.yml`; the Bilimbi revision it builds against is
