@@ -153,6 +153,46 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
     assert [] = Repo.all(Bilimbi.Factory.ProductionExecution.HoldOverride)
   end
 
+  test "material that has met its hold is consumed without an override", context do
+    %{scope: scope, coil: coil, receiving: location} = context
+    {order, attrs} = held_order(context)
+
+    receive_unit = fn code, hours_before ->
+      {:ok, receipt} =
+        Inventory.record_receipt(
+          scope,
+          73,
+          request("R-" <> code,
+            effective_at: DateTime.add(attrs.completed_at, -hours_before * 3600),
+            lines: [
+              %{
+                item_id: coil.id,
+                location_id: location.id,
+                quantity: 100,
+                observation: "measured",
+                identity: %{kind: "unit", code: code}
+              }
+            ]
+          )
+        )
+
+      hd(receipt.entries).identity_id
+    end
+
+    uncured = receive_unit.("COIL-23H", 23)
+    cured = receive_unit.("COIL-25H", 25)
+    draw = fn identity_id -> [Map.put(hd(attrs.inputs), :identity_id, identity_id)] end
+
+    assert {:error, :material_held} =
+             complete(context, order, %{attrs | request_id: "EX-23H", inputs: draw.(uncured)})
+
+    assert {:ok, completed} =
+             complete(context, order, %{attrs | request_id: "EX-25H", inputs: draw.(cured)})
+
+    assert {:ok, []} = ProductionExecution.list_hold_overrides(scope, 73, completed.id)
+    assert [] = Repo.all(Bilimbi.Factory.ProductionExecution.HoldOverride)
+  end
+
   test "routing process configuration also enforces the hold", context do
     %{scope: scope, product: product, coil: coil, sheet: sheet, resource: resource} = context
 
@@ -646,7 +686,11 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
 
     coil_a = hd(receipt.entries).identity_id
     attrs = execution(context, "COIL-A-SLIT", 40)
-    attrs = %{attrs | inputs: [Map.put(hd(attrs.inputs), :identity_id, coil_a)]}
+    attrs = %{
+      attrs
+      | inputs: [Map.put(hd(attrs.inputs), :identity_id, coil_a)],
+        outputs: [Map.delete(hd(attrs.outputs), :identity)]
+    }
 
     assert {:error, :identity_required} =
              ProductionExecution.complete_operation(scope, 73, order.id, :live, attrs)
