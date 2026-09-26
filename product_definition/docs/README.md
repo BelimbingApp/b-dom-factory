@@ -10,7 +10,9 @@ family, tolerances, output roles and material hold rules as revisioned data.
 The public facade is `Bilimbi.Factory.ProductDefinition`. Every call takes a
 Tenancy scope and company ID, and item and unit references are validated through
 Inventory's public API. `select_revisions/5` returns the exact product, formula
-and routing revisions a future order will retain. Definitions do not create
+and routing revisions a future order will retain, refusing a routing whose
+operation inputs are not Formula/BOM inputs, whose outputs are not Formula/BOM
+outputs, or that never outputs the product's item. Definitions do not create
 orders or post material movements.
 
 The tables are Bilimbi-only; they have no Belimbing adoption baseline. Use

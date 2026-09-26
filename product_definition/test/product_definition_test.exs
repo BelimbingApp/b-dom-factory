@@ -112,6 +112,28 @@ defmodule Bilimbi.Factory.ProductDefinitionTest do
 
     assert {:error, :routing_not_found} =
              Definitions.select_revisions(scope, 73, product.id, first.version, 99)
+
+    for version <- [nil, "1", 0] do
+      assert {:error, :routing_not_found} =
+               Definitions.select_revisions(scope, 73, product.id, first.version, version)
+
+      assert {:error, :formula_not_found} =
+               Definitions.get_formula_revision(scope, 73, product.id, version)
+    end
+
+    {:ok, wrong_output} =
+      Definitions.publish_routing(scope, 73, product.id, %{
+        operations: [%{operation | outputs: [input.id]}]
+      })
+
+    assert {:error, :routing_formula_mismatch} =
+             Definitions.select_revisions(
+               scope,
+               73,
+               product.id,
+               first.version,
+               wrong_output.version
+             )
   end
 
   test "definitions refuse foreign items and resources across company boundaries", %{

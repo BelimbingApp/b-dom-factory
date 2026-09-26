@@ -108,18 +108,26 @@ defmodule Bilimbi.Factory.ProductDefinition do
     with {:ok, product} <- get_product(scope, company_id, product_id),
          {:ok, formula} <- get_formula_revision(scope, company_id, product_id, formula_version),
          {:ok, routing} <- get_routing_revision(scope, company_id, product_id, routing_version),
-         :ok <- compatible(formula, routing) do
+         :ok <- compatible(product, formula, routing) do
       {:ok, %{product: product, formula: formula, routing: routing}}
     end
   end
 
-  defp compatible(formula, routing) do
-    items = MapSet.new(Enum.map(formula.lines, & &1["item_id"]))
+  defp compatible(product, formula, routing) do
+    inputs = role_items(formula, "input")
+    outputs = role_items(formula, "output")
+    operations = routing.operations
 
-    if Enum.all?(routing.operations, fn operation ->
-         Enum.all?(operation["inputs"] ++ operation["outputs"], &MapSet.member?(items, &1))
-       end), do: :ok, else: {:error, :routing_formula_mismatch}
+    if Enum.all?(operations, fn operation ->
+         Enum.all?(operation["inputs"], &MapSet.member?(inputs, &1)) and
+           Enum.all?(operation["outputs"], &MapSet.member?(outputs, &1))
+       end) and Enum.any?(operations, &(product.item_id in &1["outputs"])),
+       do: :ok,
+       else: {:error, :routing_formula_mismatch}
   end
+
+  defp role_items(formula, role),
+    do: for(line <- formula.lines, line["role"] == role, into: MapSet.new(), do: line["item_id"])
 
   defp product_output(product, lines) do
     if Enum.any?(lines, &(&1["role"] == "output" and &1["item_id"] == product.item_id)),
@@ -158,8 +166,10 @@ defmodule Bilimbi.Factory.ProductDefinition do
 
   defp revision(scope, company_id, schema, product_id, version, error, fields) do
     with {:ok, _product} <- get_product(scope, company_id, product_id) do
-      case Repo.get_by(schema, company_id: company_id, product_id: product_id, version: version) do
+      case (is_integer(version) and version > 0) &&
+             Repo.get_by(schema, company_id: company_id, product_id: product_id, version: version) do
         nil -> {:error, error}
+        false -> {:error, error}
         row -> {:ok, Map.take(row, fields)}
       end
     end
