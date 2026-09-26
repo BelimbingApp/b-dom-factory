@@ -686,6 +686,7 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
 
     coil_a = hd(receipt.entries).identity_id
     attrs = execution(context, "COIL-A-SLIT", 40)
+
     attrs = %{
       attrs
       | inputs: [Map.put(hd(attrs.inputs), :identity_id, coil_a)],

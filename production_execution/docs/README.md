@@ -1,6 +1,7 @@
 # Factory Production Execution
 
-Phase 1 records orders or batches and completed routed operations. The public
+Production Execution records orders or batches, completed routed operations,
+and material hold overrides. The public
 facade is `Bilimbi.Factory.ProductionExecution`. The module declares its
 Inventory production posting authority in `mix.exs` application metadata.
 
