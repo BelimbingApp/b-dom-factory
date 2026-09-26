@@ -60,6 +60,10 @@ jobs:
         with:
           path: factory
 
+      - name: Verify migration versions are unique across modules
+        working-directory: factory
+        run: .github/scripts/unique_migration_versions.sh
+
       - name: Read the pinned Bilimbi revision
         id: pin
         working-directory: .
