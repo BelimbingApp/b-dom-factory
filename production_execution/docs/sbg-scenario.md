@@ -12,14 +12,16 @@ reactor → dry glue → BOPP coating on a line → a 1200 mm roll slit into 600
 and 300 mm rolls, derived trim, and measured waste. Inventory genealogy traces
 each slit roll through coating and glue to all three receipts. Product
 Definition stores the selected generic formula shape, process family, and
-route revisions. The fixture also contains proposed SBG process metadata;
-no confidential recipe is included.
+route revisions, and refuses the proposed glue process metadata. No
+confidential recipe is included.
 
 ## Values requiring SBG confirmation
 
 Line references are to Bilimbi's `docs/plans/factory/sbg-requirements.md`.
-Every fixture value below is a stand-in, including codes, quantities, units,
-timing, identities, people, and provenance.
+Every value below is a stand-in, including codes, quantities, units, timing,
+identities, people, and provenance. Glue metadata with no Factory contract
+(capacity, type, revision, previous batch, cleaning, Quality token) appears
+only here, not in the fixture.
 
 | Requirement lines | Scenario value requiring confirmation |
 | --- | --- |
@@ -42,9 +44,9 @@ timing, identities, people, and provenance.
   them and submit only validated commands through Production Execution.
 - Product Definition `process_config` accepts only process family, tolerances,
   output roles, and material hold rules. The proposed reactor capacity, glue
-  type/revision, previous batch, cleaning sequence, and Quality token remain
-  in the representative fixture; they cannot be published as structured
-  Product Definition data. Helper is only in execution evidence. Factory has
+  type/revision, previous batch, cleaning sequence, and Quality token are
+  listed above but not stored; the test shows Product Definition refusing
+  reactor capacity as `process_config`. Helper is only in execution evidence. Factory has
   no typed public query for these fields. Confirm which must be durable per
   run and searchable before widening a generic contract (lines 166–169,
   223–225).

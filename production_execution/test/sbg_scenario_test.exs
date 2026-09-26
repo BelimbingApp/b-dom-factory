@@ -3,7 +3,7 @@ Code.require_file("support/sbg_scenario.ex", __DIR__)
 defmodule Bilimbi.Factory.ProductionExecution.SbgScenarioTest do
   use Bilimbi.Base.Database.DataCase, async: true
 
-  alias Bilimbi.Factory.{ProductDefinition, ProductionExecution}
+  alias Bilimbi.Factory.{Inventory, ProductDefinition, ProductionExecution}
   alias Bilimbi.Factory.ProductionExecution.SbgScenario
 
   import Bilimbi.Factory.Inventory.TestFixtures
@@ -16,7 +16,7 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenarioTest do
   end
 
   test "synthetic SBG glue, coating and slitting reconcile through Factory",
-       %{scope: scope} = context do
+       %{scope: scope, kg: kg} = context do
     scenario = SbgScenario.seed!(context)
     %{items: items, receipts: receipts, orders: orders, runs: runs} = scenario
     {wet, wet_tx} = runs.wet
@@ -40,11 +40,17 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenarioTest do
                orders.glue.order.routing_version
              )
 
-    assert selected.formula.process_config["process_family"] == "adhesive glue"
-    assert scenario.glue_config.reactor_capacity_kg == 120
-    assert scenario.glue_config.previous_batch == "SBG-GLUE-BATCH-0"
-    assert scenario.glue_config.cleaning_sequence == "CLEAN-1"
-    assert scenario.glue_config.quality_result_ref == "quality:pending"
+    assert selected.formula.process_config == %{"process_family" => "adhesive glue"}
+    assert selected.routing.process_config == %{"process_family" => "adhesive glue"}
+
+    assert {:error, :invalid_process_config} =
+             ProductDefinition.publish_formula(scope, 73, orders.glue.order.product_id, %{
+               lines: [
+                 %{item_id: items["GLUE-DRY"].id, unit_id: kg.id, role: "output", quantity: 1}
+               ],
+               process_config: %{process_family: "adhesive glue", reactor_capacity_kg: 120}
+             })
+
     assert Enum.map(selected.routing.operations, & &1["code"]) == ~w(MIX-WET DRY)
 
     assert Decimal.eq?(quantity(wet_tx, items["BA"].id, :input), 70)
@@ -91,24 +97,38 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenarioTest do
              &(&1.role == :variance and Decimal.eq?(&1.native_quantity, 2))
            )
 
-    [wide_roll | _] = scenario.slit_ids
-    assert {:ok, backward} = ProductionExecution.trace_backward(scope, 73, wide_roll)
-    assert Enum.map(backward.runs, & &1.operation_code) == ~w(MIX-WET DRY COAT SLIT)
+    receipt_identities = MapSet.new(receipts, fn {_sku, {_tx, identity_id}} -> identity_id end)
+    receipt_transactions = MapSet.new(receipts, fn {_sku, {tx, _}} -> tx.id end)
 
-    assert MapSet.subset?(
-             MapSet.new([
-               elem(receipts["BA"], 1),
-               elem(receipts["ADDITIVE"], 1),
-               elem(receipts["BOPP"], 1)
-             ]),
-             MapSet.new(backward.material.identities, & &1.id)
-           )
+    for {sku, code} <- [{"SLIT-600", "SLIT-600-1"}, {"SLIT-300", "SLIT-300-1"}] do
+      roll = output_identity(slit_tx, items[sku].id)
+      assert {:ok, %{code: ^code}} = Inventory.get_identity(scope, 73, roll)
 
-    assert MapSet.new(Enum.map(receipts, fn {_sku, {tx, _}} -> tx.id end)) ==
-             MapSet.new(backward.material.receipts, & &1.id)
+      assert {:ok, backward} = ProductionExecution.trace_backward(scope, 73, roll)
+      assert Enum.map(backward.runs, & &1.operation_code) == ~w(MIX-WET DRY COAT SLIT)
 
-    assert {:ok, forward} = ProductionExecution.trace_forward(scope, 73, elem(receipts["BA"], 1))
-    assert wide_roll in Enum.map(forward.material.identities, & &1.id)
+      assert MapSet.subset?(
+               receipt_identities,
+               MapSet.new(backward.material.identities, & &1.id)
+             )
+
+      assert receipt_transactions == MapSet.new(backward.material.receipts, & &1.id)
+
+      assert {:ok, forward} =
+               ProductionExecution.trace_forward(scope, 73, elem(receipts["BA"], 1))
+
+      assert roll in Enum.map(forward.material.identities, & &1.id)
+    end
+  end
+
+  defp output_identity(tx, item_id) do
+    [identity_id] =
+      for entry <- tx.entries,
+          entry.role == :stock and entry.item_id == item_id and
+            Decimal.gt?(entry.native_quantity, 0),
+          do: entry.identity_id
+
+    identity_id
   end
 
   defp quantity(tx, item_id, direction) do

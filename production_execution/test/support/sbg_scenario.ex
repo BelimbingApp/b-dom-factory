@@ -49,16 +49,6 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenario do
         {sku, {tx, output_id(tx)}}
       end
 
-    glue_config = %{
-      process_family: "adhesive glue",
-      reactor_capacity_kg: 120,
-      glue_type: "representative type A",
-      recipe_revision: "R1",
-      previous_batch: "SBG-GLUE-BATCH-0",
-      cleaning_sequence: "CLEAN-1",
-      quality_result_ref: "quality:pending"
-    }
-
     glue =
       order!(
         scope,
@@ -70,7 +60,7 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenario do
           {"MIX-WET", ~w(BA ADDITIVE), ~w(GLUE-WET), "REACTOR-A"},
           {"DRY", ~w(GLUE-WET), ~w(GLUE-DRY), "REACTOR-A"}
         ],
-        glue_config
+        "adhesive glue"
       )
 
     coating =
@@ -83,7 +73,7 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenario do
         [
           {"COAT", ~w(BOPP GLUE-DRY), ~w(COATED), "COATER-A"}
         ],
-        %{process_family: "adhesive coating", coating_line: "COATER-A"}
+        "adhesive coating"
       )
 
     slitting =
@@ -96,7 +86,7 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenario do
         [
           {"SLIT", ~w(COATED), ~w(SLIT-600 SLIT-300 TRIM WASTE), "SLITTER-A"}
         ],
-        %{process_family: "tape slitting", source_width_mm: 1200}
+        "tape slitting"
       )
 
     {wet, wet_tx, wet_attrs} =
@@ -105,6 +95,7 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenario do
         glue,
         :import,
         "SBG-AX-GLUE-WET-1",
+        "MIX-WET",
         at.(30),
         [
           draw(items["BA"], receiving, 70, receipt_id(receipts, "BA")),
@@ -123,6 +114,7 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenario do
         glue,
         :import,
         "SBG-AX-GLUE-DRY-1",
+        "DRY",
         at.(29),
         [draw(items["GLUE-WET"], locations["REACTOR-A"], 98, output_id(wet_tx))],
         [make(items["GLUE-DRY"], locations["REACTOR-A"], 80, "GLUE-DRY-1", "lot")],
@@ -138,6 +130,7 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenario do
         coating,
         :live,
         "SBG-COAT-1",
+        "COAT",
         at.(2),
         [
           draw(items["BOPP"], receiving, 50, receipt_id(receipts, "BOPP")),
@@ -166,6 +159,7 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenario do
         slitting,
         :live,
         "SBG-SLIT-1",
+        "SLIT",
         at.(1),
         [draw(items["COATED"], locations["COATER-A"], 125, output_id(coat_tx))],
         [
@@ -220,7 +214,6 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenario do
       items: items,
       locations: locations,
       receipts: receipts,
-      glue_config: glue_config,
       orders: %{glue: glue, coating: coating, slitting: slitting},
       runs: %{
         wet: {wet, wet_tx},
@@ -228,12 +221,11 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenario do
         coat: {coat, coat_tx},
         slit: {slit, slit_tx}
       },
-      slit_ids: output_ids(slit_tx),
       import_request: wet_attrs
     }
   end
 
-  defp order!(scope, kg, item, code, kind, operations, config) do
+  defp order!(scope, kg, item, code, kind, operations, process_family) do
     {:ok, product} =
       ProductDefinition.create_product(scope, @company, item.id, %{code: code, name: code})
 
@@ -247,7 +239,7 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenario do
     {:ok, formula} =
       ProductDefinition.publish_formula(scope, @company, product.id, %{
         lines: lines,
-        process_config: %{process_family: config.process_family}
+        process_config: %{process_family: process_family}
       })
 
     resources =
@@ -277,7 +269,7 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenario do
     {:ok, routing} =
       ProductDefinition.publish_routing(scope, @company, product.id, %{
         operations: routed,
-        process_config: %{process_family: config.process_family}
+        process_config: %{process_family: process_family}
       })
 
     {:ok, order} =
@@ -297,15 +289,7 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenario do
     item
   end
 
-  defp run!(scope, config, source, request_id, at, inputs, outputs, variance) do
-    code =
-      case request_id do
-        "SBG-AX-GLUE-WET-1" -> "MIX-WET"
-        "SBG-AX-GLUE-DRY-1" -> "DRY"
-        "SBG-COAT-1" -> "COAT"
-        "SBG-SLIT-1" -> "SLIT"
-      end
-
+  defp run!(scope, config, source, request_id, code, at, inputs, outputs, variance) do
     attrs = %{
       request_id: request_id,
       operation_code: code,
@@ -360,13 +344,11 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenario do
   defp optional(map, _key, nil), do: map
   defp optional(map, key, value), do: Map.put(map, key, value)
   defp receipt_id(receipts, sku), do: receipts |> Map.fetch!(sku) |> elem(1)
-  defp output_id(tx), do: tx |> output_ids() |> hd()
 
-  defp output_ids(tx),
+  defp output_id(tx),
     do:
-      for(
-        entry <- tx.entries,
-        entry.role == :stock and Decimal.gt?(entry.native_quantity, 0),
-        do: entry.identity_id
+      Enum.find_value(
+        tx.entries,
+        &(&1.role == :stock and Decimal.gt?(&1.native_quantity, 0) and &1.identity_id)
       )
 end
