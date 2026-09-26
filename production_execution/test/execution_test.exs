@@ -802,6 +802,81 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
     assert backward.runs == []
   end
 
+  test "yields net corrections of the run, following correction chains", context do
+    %{scope: scope, order: order, sheet: sheet, receiving: location} = context
+
+    assert {:ok, run} =
+             ProductionExecution.complete_operation(
+               scope,
+               73,
+               order.id,
+               :live,
+               execution(context, "EX-CORR", 48)
+             )
+
+    assert {:ok, %{corrected: false, correction_transaction_ids: [], balances: [before]}} =
+             ProductionExecution.get_run_yield(scope, 73, run.id)
+
+    assert Decimal.eq?(before.product, 48)
+
+    assert {:ok, transaction} = Inventory.get_transaction(scope, 73, run.inventory_transaction_id)
+
+    output_id =
+      Enum.find_value(
+        transaction.entries,
+        &(&1.role == :stock and &1.item_id == sheet.id and &1.identity_id)
+      )
+
+    adjust = %{
+      item_id: sheet.id,
+      location_id: location.id,
+      quantity: -1,
+      observation: "measured",
+      identity_id: output_id
+    }
+
+    assert {:ok, first} =
+             Inventory.record_production_correction(
+               scope,
+               73,
+               request("EX-CORR-1",
+                 corrects_transaction_id: transaction.id,
+                 reason: "Reweighed",
+                 lines: [adjust]
+               ),
+               ProductionExecution
+             )
+
+    assert {:ok, second} =
+             Inventory.record_production_correction(
+               scope,
+               73,
+               request("EX-CORR-2",
+                 corrects_transaction_id: first.id,
+                 reason: "Reweighed again",
+                 lines: [adjust]
+               ),
+               ProductionExecution
+             )
+
+    corrections = [first.id, second.id]
+
+    assert {:ok, %{corrected: true, correction_transaction_ids: ^corrections, balances: [run_kg]}} =
+             ProductionExecution.get_run_yield(scope, 73, run.id)
+
+    assert Decimal.eq?(run_kg.input, 48) and Decimal.eq?(run_kg.product, 46)
+
+    assert {:ok, [%{quantity: position}]} =
+             Inventory.get_identity_positions(scope, 73, output_id)
+
+    assert Decimal.eq?(position, run_kg.product)
+
+    assert {:ok, %{runs: [unit_run]}} = ProductionExecution.get_unit_yield(scope, 73, output_id)
+    assert unit_run.corrected and unit_run.correction_transaction_ids == corrections
+    assert [%{unit_output: unit_output}] = unit_run.balances
+    assert Decimal.eq?(unit_output, 46)
+  end
+
   test "yields group balances by native unit when a run mixes units", context do
     %{scope: scope, order: order, sheet: sheet, scrap: scrap, kg: kg, receiving: location} =
       context

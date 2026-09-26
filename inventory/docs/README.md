@@ -29,7 +29,7 @@ company is reported as not found. Results are read models (`Item`, `Unit`,
 | Stock position | `get_stock_position/4` |
 | Ledger postings | `record_receipt/3`, `record_transfer/3`, `record_consumption/3`, `record_correction/3` |
 | Production postings | `record_output/4`, `record_transform/4`, `record_production_consumption/4`, `record_production_correction/4` |
-| Ledger reads | `get_transaction/3`, `list_transactions/3` |
+| Ledger reads | `get_transaction/3`, `list_transactions/3`, `list_corrections/3` |
 | Lot and unit genealogy | `get_identity/3`, `get_identity_positions/3`, `trace_backward/3`, `trace_forward/3`, `list_identity_draws/3` |
 | Posting authority | `posting_authority_registered?/1` |
 
@@ -72,6 +72,8 @@ do not account for. The `record_*` docs on the facade define each request.
   the transaction it corrects, and signed adjustment lines. The original never
   changes: PostgreSQL refuses UPDATE, DELETE, and TRUNCATE on the ledger, and
   a deferred trigger refuses a commit whose entries do not balance.
+  `list_corrections/3` reads a transaction's corrections, following
+  corrections of corrections.
 - **Transforms.** Inputs, outputs, and their genealogy links commit together.
   Every line shares one native unit. Observed quantities are never adjusted;
   when inputs and outputs differ, the transform needs `variance` evidence and

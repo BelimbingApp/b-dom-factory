@@ -14,7 +14,9 @@ defmodule Bilimbi.Factory.ProductionExecution.Yield do
       execution ->
         with {:ok, transaction} <-
                Inventory.get_transaction(scope, company_id, execution.inventory_transaction_id),
-             do: {:ok, summarize(execution, transaction)}
+             {:ok, corrections} <-
+               Inventory.list_corrections(scope, company_id, transaction.id),
+             do: {:ok, summarize(execution, transaction, corrections, nil)}
     end
   end
 
@@ -25,8 +27,7 @@ defmodule Bilimbi.Factory.ProductionExecution.Yield do
   def for_unit(scope, company_id, identity_id) do
     with {:ok, identity} <- Inventory.get_identity(scope, company_id, identity_id),
          {:ok, draws} <- Inventory.list_identity_draws(scope, company_id, identity_id) do
-      txs = Map.new(draws, &{&1.id, &1})
-      ids = [identity.source_transaction_id | Map.keys(txs)] |> Enum.uniq()
+      ids = [identity.source_transaction_id | Enum.map(draws, & &1.id)] |> Enum.uniq()
 
       runs =
         from(execution in Execution,
@@ -36,38 +37,11 @@ defmodule Bilimbi.Factory.ProductionExecution.Yield do
         )
         |> Repo.all()
         |> Enum.map(fn execution ->
-          transaction =
-            case Map.fetch(txs, execution.inventory_transaction_id) do
-              {:ok, transaction} ->
-                transaction
+          {:ok, transaction} =
+            Inventory.get_transaction(scope, company_id, execution.inventory_transaction_id)
 
-              :error ->
-                {:ok, transaction} =
-                  Inventory.get_transaction(scope, company_id, execution.inventory_transaction_id)
-
-                transaction
-            end
-
-          summary = summarize(execution, transaction)
-
-          balances =
-            Enum.map(summary.balances, fn balance ->
-              unit_entries =
-                Enum.filter(
-                  transaction.entries,
-                  &(&1.role == :stock and &1.identity_id == identity_id and
-                      &1.native_unit.id == balance.unit.id)
-                )
-
-              Map.merge(balance, %{
-                unit_input:
-                  unit_entries |> Enum.filter(&Decimal.negative?(&1.native_quantity)) |> sum_abs(),
-                unit_output:
-                  unit_entries |> Enum.filter(&Decimal.positive?(&1.native_quantity)) |> sum_abs()
-              })
-            end)
-
-          %{summary | balances: balances}
+          {:ok, corrections} = Inventory.list_corrections(scope, company_id, transaction.id)
+          summarize(execution, transaction, corrections, identity_id)
         end)
 
       {:ok, %{identity: identity, runs: runs}}
@@ -75,12 +49,31 @@ defmodule Bilimbi.Factory.ProductionExecution.Yield do
   end
 
   # Balances are grouped by native unit and never converted between units.
-  defp summarize(execution, transaction) do
+  # A correction entry nets into the side of the run entry it adjusts.
+  defp summarize(execution, transaction, corrections, identity_id) do
+    original = Enum.filter(transaction.entries, &(&1.role in [:stock, :variance]))
+
+    adjustments =
+      corrections
+      |> Enum.flat_map(& &1.entries)
+      |> Enum.filter(&(&1.role == :stock))
+      |> Enum.map(fn entry ->
+        case Enum.find(
+               original,
+               &(&1.role == :stock and &1.item_id == entry.item_id and
+                   &1.identity_id == entry.identity_id)
+             ) do
+          nil -> {side(entry), entry}
+          adjusted -> {side(adjusted), entry}
+        end
+      end)
+
     balances =
-      transaction.entries
-      |> Enum.filter(&(&1.role in [:stock, :variance]))
-      |> Enum.group_by(& &1.native_unit.id)
-      |> Enum.map(fn {_unit_id, entries} -> balance(entries) end)
+      original
+      |> Enum.map(&{side(&1), &1})
+      |> Kernel.++(adjustments)
+      |> Enum.group_by(fn {_side, entry} -> entry.native_unit.id end)
+      |> Enum.map(fn {_unit_id, sided} -> balance(sided, identity_id) end)
       |> Enum.sort_by(& &1.unit.id)
 
     %{
@@ -88,36 +81,48 @@ defmodule Bilimbi.Factory.ProductionExecution.Yield do
       transaction_id: transaction.id,
       operation_code: execution.operation_code,
       resource_id: execution.resource_id,
+      corrected: corrections != [],
+      correction_transaction_ids: Enum.map(corrections, & &1.id),
       balances: balances
     }
   end
 
-  defp balance(entries) do
-    stock = Enum.filter(entries, &(&1.role == :stock))
-    outputs = Enum.filter(stock, &Decimal.positive?(&1.native_quantity))
-    inputs = Enum.filter(stock, &Decimal.negative?(&1.native_quantity))
-    trim = Enum.filter(outputs, &(&1.output_role == "trim"))
-    waste = Enum.filter(outputs, &(&1.output_role == "waste"))
-    product = Enum.reject(outputs, &(&1.output_role in ["trim", "waste"]))
+  defp side(%{role: :variance}), do: :variance
 
-    variance =
-      entries
-      |> Enum.filter(&(&1.role == :variance))
-      |> Enum.reduce(Decimal.new(0), &Decimal.add(&1.native_quantity, &2))
-
-    %{
-      unit: hd(entries).native_unit,
-      input: sum_abs(inputs),
-      product: sum_abs(product),
-      trim: sum_abs(trim),
-      waste: sum_abs(waste),
-      variance: variance
-    }
+  defp side(entry) do
+    cond do
+      Decimal.negative?(entry.native_quantity) -> :input
+      entry.output_role == "trim" -> :trim
+      entry.output_role == "waste" -> :waste
+      true -> :product
+    end
   end
 
-  defp sum_abs(entries),
-    do:
-      Enum.reduce(entries, Decimal.new(0), fn entry, total ->
-        Decimal.add(total, Decimal.abs(entry.native_quantity))
-      end)
+  defp balance(sided, identity_id) do
+    balance = %{
+      unit: sided |> hd() |> elem(1) |> Map.fetch!(:native_unit),
+      input: Decimal.negate(total(sided, [:input])),
+      product: total(sided, [:product]),
+      trim: total(sided, [:trim]),
+      waste: total(sided, [:waste]),
+      variance: total(sided, [:variance])
+    }
+
+    if identity_id do
+      own = Enum.filter(sided, fn {_side, entry} -> entry.identity_id == identity_id end)
+
+      Map.merge(balance, %{
+        unit_input: Decimal.negate(total(own, [:input])),
+        unit_output: total(own, [:product, :trim, :waste])
+      })
+    else
+      balance
+    end
+  end
+
+  defp total(sided, sides) do
+    for {side, entry} <- sided, side in sides, reduce: Decimal.new(0) do
+      sum -> Decimal.add(sum, entry.native_quantity)
+    end
+  end
 end

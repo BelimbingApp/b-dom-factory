@@ -107,6 +107,25 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
     |> then(&read_models(company_id, &1))
   end
 
+  @doc "Reads the corrections of a transaction, including corrections of those corrections, in ID order."
+  @spec corrections(pos_integer(), pos_integer()) :: [Transaction.t()]
+  def corrections(company_id, transaction_id), do: corrections(company_id, [transaction_id], [])
+
+  defp corrections(company_id, [], found),
+    do: read_models(company_id, Enum.sort_by(found, & &1.id))
+
+  defp corrections(company_id, ids, found) do
+    rows =
+      from(transaction in Schemas.Transaction,
+        where:
+          transaction.company_id == ^company_id and transaction.kind == "correction" and
+            transaction.corrects_transaction_id in ^ids
+      )
+      |> Repo.all()
+
+    corrections(company_id, Enum.map(rows, & &1.id), found ++ rows)
+  end
+
   @spec list(pos_integer(), keyword()) :: [Transaction.t()]
   def list(company_id, opts) do
     query =

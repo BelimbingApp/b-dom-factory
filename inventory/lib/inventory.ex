@@ -493,6 +493,15 @@ defmodule Bilimbi.Factory.Inventory do
          do: {:ok, Ledger.draws(company_id, identity.id)}
   end
 
+  @doc "Lists the corrections of a transaction, following corrections of corrections, in ID order."
+  @spec list_corrections(Scope.t(), pos_integer(), pos_integer()) ::
+          {:ok, [Transaction.t()]} | {:error, :company_not_found | :transaction_not_found}
+  def list_corrections(%Scope{} = scope, company_id, transaction_id) do
+    with :ok <- live_company(scope, company_id),
+         {:ok, transaction} <- Ledger.get(company_id, transaction_id),
+         do: {:ok, Ledger.corrections(company_id, transaction.id)}
+  end
+
   @spec get_transaction(Scope.t(), pos_integer(), pos_integer()) ::
           {:ok, Transaction.t()} | {:error, :company_not_found | :transaction_not_found}
   def get_transaction(%Scope{} = scope, company_id, transaction_id) do

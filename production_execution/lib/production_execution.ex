@@ -140,13 +140,13 @@ defmodule Bilimbi.Factory.ProductionExecution do
     end
   end
 
-  @doc "Reads one run's Inventory balances per native unit: input, product, trim, waste, and signed variance."
+  @doc "Reads one run's Inventory balances per native unit, net of its corrections: input, product, trim, waste, and signed variance."
   def get_run_yield(%Scope{} = scope, company_id, execution_id) do
     with {:ok, _company} <- company(scope, company_id),
          do: Yield.for_run(scope, company_id, execution_id)
   end
 
-  @doc "Reads whole-run balances per native unit for the production creation and draws of a unit, with its own input or output quantities."
+  @doc "Reads whole-run balances per native unit, net of corrections, for the production creation and draws of a unit, with its own input or output quantities."
   def get_unit_yield(%Scope{} = scope, company_id, identity_id) do
     with {:ok, _company} <- company(scope, company_id),
          do: Yield.for_unit(scope, company_id, identity_id)
