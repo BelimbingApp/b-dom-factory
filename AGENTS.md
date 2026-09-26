@@ -33,6 +33,21 @@ and phases are Bilimbi's `docs/plans/factory/0000-factory-domain.md` and
   shape); adoption refuses a missing table, so Bilimbi-only tables stay out,
   as Core Geonames' postcode overrides do. `inventory/lib/inventory/schema_contract.ex`
   is the example.
+- Module tests run against temporary tables built in each module's
+  `test/support/test_fixtures.ex`, not its migrations (Core Compatibility runs
+  those). Mirror a new migration's constraints and triggers there, or a test
+  that makes PostgreSQL refuse proves nothing.
+- `ModuleRegistry.installed_modules!/0` raises in a module-folder `mix test`,
+  which loads only part of the graph. Read one application's descriptor with
+  `Application.get_env(app, :bilimbi_module)`, as
+  `inventory/lib/inventory/posting_authority.ex` does.
+- Module discovery refuses any `bilimbi.module.exs` key beyond the
+  descriptor's own. Carry extra composition metadata in the module's
+  `mix.exs` application env beside `MixDiscovery.application_env/1`, as a
+  production posting authority is declared (`inventory/docs/README.md`).
+- `inventory/test/posting_boundary_test.exs`'s `:compiled_graph` test needs
+  the whole mounted graph compiled; a module-folder `mix test` excludes it,
+  and CI runs it with `mix test --only compiled_graph` after compiling.
 - Never commit a lock file here. Mounted builds share Bilimbi's ignored
   `.scratchpad/composition-lock/` overlay (`mix/composition_lock.exs`).
 - CI is `.github/workflows/ci.yml`; the Bilimbi revision it builds against is
