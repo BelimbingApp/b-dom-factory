@@ -2,8 +2,8 @@ defmodule Bilimbi.Factory.Inventory do
   @moduledoc """
   Factory Inventory's public API: the item master, units of measure, stock
   locations, material identity, item-level unit conversions, the Material
-  Transaction ledger, the production posting-authority registry, and stock
-  positions and lot or unit genealogy.
+  Transaction ledger, the production posting-authority registry, stock
+  positions, and lot or unit genealogy.
 
   Every operation takes a `Bilimbi.Base.Tenancy.Scope` and a company ID. The
   company must be live and inside the scope's tenant; a missing, deleted, or

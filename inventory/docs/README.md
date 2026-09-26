@@ -80,8 +80,9 @@ material within its company. Subsequent transfer, consumption, or transform
 input lines cite its `identity_id`; a transform output creates a fresh identity.
 When a transform uses any identity, every input and output must be identified.
 Inventory checks both the overall location balance and the balance of the
-specific identity, or the unidentified pool, before a draw. The stock entry exposes `identity_id`, while `get_identity/3`
-returns the immutable code, kind, item, and source transaction.
+specific identity, or the unidentified pool, before a draw. The stock entry
+exposes `identity_id`, while `get_identity/3` returns the immutable code, kind,
+item, and source transaction.
 
 `trace_backward/3` and `trace_forward/3` walk the transform links between
 identities across any number of transformations. They return the root identity,
