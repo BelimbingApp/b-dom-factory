@@ -1,6 +1,7 @@
 # Factory Production Execution
 
-Phase 1 records orders or batches and completed routed operations. The public
+Production Execution records orders or batches, completed routed operations,
+and material hold overrides. The public
 facade is `Bilimbi.Factory.ProductionExecution`. The module declares its
 Inventory production posting authority in `mix.exs` application metadata.
 
@@ -32,11 +33,37 @@ both live commands (`source: :live`) and historical imports
 - `variance`: optional Inventory transform evidence with `evidence` and
   `reconciliation_basis`; required when actual inputs and outputs differ.
   Accepted only when the execution has both inputs and outputs.
+- A Formula input with `material_hold_rule: %{"hours" => positive_integer}`
+  (or a Formula or routing `process_config.material_hold_rules` entry keyed by
+  the input item ID; the longest applicable minimum governs)
+  requires each matching actual input to name an Inventory `identity_id`.
+  Inventory resolves its immutable source transaction; the hold age runs from
+  that transaction's effective time to execution completion. A missing,
+  mismatched, or future source is refused. Inventory verifies that the named
+  identity still holds the consumed quantity at the location. An identified
+  transform input also requires identified outputs.
+- For early consumption, provide `hold_override` with `actor`, a
+  `Bilimbi.Base.Authz.Actor` in the scope's tenant and the execution's
+  company, and a nonblank `reason`. Base Authz must grant
+  `factory.production-execution.material-hold.override` to that actor. The
+  decision runs before the posting transaction, so a refused attempt keeps
+  its Authz decision log. Bilimbi's `Scope` does not yet carry an
+  authenticated actor, so this principal is caller-asserted until it does.
+- A live override records the actor as both approver (`actor_*`) and
+  recorder (`recorded_by_*`), timed when authorized. An import also supplies
+  the source `evidence`, the historical `occurred_at` (not after completion),
+  and optionally the historical `approver` (`type`, `id`, and an agent's
+  `acting_for_user_id`); its approver is null when the source names none,
+  and the importing actor is recorded only in `recorded_by_*`.
+  `list_hold_overrides/3` returns the source, approver, recorder, time,
+  reason, evidence, identity, execution, and Inventory transaction.
 
 The facade posts through Inventory's named production functions, carrying
 opaque execution, order/batch, and resource references. Execution and material
 effects use one Repo transaction, so neither survives a failure in the other.
-Material holds and overrides are a later phase.
+The identity is the affected lot or physical unit. Create it on the Inventory
+receipt or production output, and preserve its ID on subsequent material
+movements.
 
 ## Production trace
 

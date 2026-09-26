@@ -14,8 +14,8 @@ Bilimbi checkout; it does not build on its own.
 Inventory has its catalog, locations, units, stock positions, Material
 Transaction ledger, lot and unit genealogy, and production posting-authority registry; Product
 Definition has Phase 1 product, Formula/BOM and routing revisions;
-Production Execution Phase 1 records orders, batches, and actual routed work
-with atomic Inventory postings. Their scope
+Production Execution records orders, batches, actual routed work, and
+material hold overrides with atomic Inventory postings. Their scope
 and phases are in Bilimbi's
 [Factory Domain plan](https://github.com/BelimbingApp/bilimbi/blob/main/docs/plans/factory/0000-factory-domain.md) and
 [Inventory module plan](https://github.com/BelimbingApp/bilimbi/blob/main/docs/plans/factory/0010-inventory-module.md).

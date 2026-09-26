@@ -15,6 +15,11 @@
   `list_identity_draws/3` for material ancestry and use, then join execution
   context by transaction ID as `lib/production_execution/trace.ex` does;
   never keep another ancestry table.
+- For a held input, use Inventory's `identity_id` and immutable source
+  transaction through its public API, as described in `docs/README.md`.
+  Do not accept a caller-supplied start time. Run the override Authz decision
+  before `complete_operation/5` opens its transaction, so a refusal keeps its
+  decision log; inside, only insert override evidence with the postings.
 
 ## Maintaining this file
 
