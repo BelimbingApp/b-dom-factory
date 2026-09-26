@@ -105,8 +105,9 @@ Production Execution declares nothing yet; Inventory's test build declares
 
 The BEAM cannot prove which module calls, so `test/posting_boundary_test.exs`
 checks the compiled graph: it fails when a module other than a declared
-authority calls a production posting, or when any module outside Inventory
-calls one Inventory keeps internal (`@moduledoc false`, such as `Ledger`).
+authority calls or captures a production posting, or when any module outside
+Inventory calls or captures one Inventory keeps internal (`@moduledoc false`,
+such as `Ledger`).
 It needs the whole mounted graph compiled, so a module-folder `mix test`
 excludes it; CI runs it with `mix test --only compiled_graph`.
 
