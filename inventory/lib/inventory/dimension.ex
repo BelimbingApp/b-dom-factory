@@ -21,6 +21,7 @@ defmodule Bilimbi.Factory.Inventory.Dimension do
 
     with true <- map_size(value) == 3,
          {:ok, decimal} <- decimal(measurement),
+         false <- Decimal.inf?(decimal) or Decimal.nan?(decimal),
          true <- Decimal.gt?(decimal, 0) and Decimal.eq?(Decimal.round(decimal, 12), decimal),
          unit when unit in @units <- name(unit),
          provenance when provenance in @provenances <- name(provenance) do

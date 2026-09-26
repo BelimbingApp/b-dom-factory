@@ -80,12 +80,15 @@ transforms that drew a visited identity (`Inventory.list_identity_draws/3`),
 so a run without an identified output still appears. Inventory alone stores
 material ancestry.
 
-`get_run_yield/3` derives one execution's native-unit input, product, trim,
-waste, and signed variance from its linked Inventory transaction. Product
-includes output roles other than `trim` and `waste`. `get_unit_yield/3` lists
-the balances of the unit's creation run and later production draws, with that
-unit's own input and output quantities shown separately. A balance belongs to
-the whole run; Factory does not invent a share of a multi-input run for one unit.
+`get_run_yield/3` derives one execution's `balances` from its linked Inventory
+transaction: one group per native unit, each with that unit, input, product,
+trim, waste, and signed variance. A single-unit run has one group; a run that
+mixes kilograms and litres has two, and quantities are never converted between
+units. Product includes output roles other than `trim` and `waste`.
+`get_unit_yield/3` lists the balances of the unit's creation run and later
+production draws; each group also carries that unit's own `unit_input` and
+`unit_output`. A balance belongs to the whole run; Factory does not invent a
+share of a multi-input run for one unit.
 Only transforms have an input-to-output conservation balance; a standalone
 output or consumption run has one side only.
 

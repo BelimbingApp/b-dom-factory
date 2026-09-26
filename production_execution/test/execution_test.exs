@@ -802,6 +802,140 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
     assert backward.runs == []
   end
 
+  test "yields group balances by native unit when a run mixes units", context do
+    %{scope: scope, order: order, sheet: sheet, scrap: scrap, kg: kg, receiving: location} =
+      context
+
+    assert {:ok, creation} =
+             ProductionExecution.complete_operation(
+               scope,
+               73,
+               order.id,
+               :live,
+               execution(context, "ROLL-MAKE", 40)
+             )
+
+    assert {:ok, creation_tx} =
+             Inventory.get_transaction(scope, 73, creation.inventory_transaction_id)
+
+    roll_id =
+      Enum.find_value(
+        creation_tx.entries,
+        &(&1.role == :stock and &1.item_id == sheet.id and &1.identity_id)
+      )
+
+    {:ok, litre} = Inventory.create_unit(scope, 73, %{code: "L", name: "Litre"})
+    {:ok, adhesive} = Inventory.create_item(scope, 73, %{sku: "ADHESIVE", title: "Adhesive"})
+    {:ok, _material} = Inventory.register_material(scope, 73, adhesive.id, litre.id)
+
+    assert {:ok, _} =
+             Inventory.record_receipt(
+               scope,
+               73,
+               request("ADHESIVE-RCV",
+                 lines: [
+                   %{
+                     item_id: adhesive.id,
+                     location_id: location.id,
+                     quantity: 20,
+                     observation: "measured"
+                   }
+                 ]
+               )
+             )
+
+    {:ok, product} =
+      ProductDefinition.create_product(scope, 73, scrap.id, %{code: "LAM", name: "Laminate"})
+
+    {:ok, formula} =
+      ProductDefinition.publish_formula(scope, 73, product.id, %{
+        lines: [
+          %{item_id: sheet.id, unit_id: kg.id, role: "input", quantity: 40},
+          %{item_id: adhesive.id, unit_id: litre.id, role: "input", quantity: 5},
+          %{item_id: scrap.id, unit_id: kg.id, role: "output", quantity: 40}
+        ]
+      })
+
+    {:ok, routing} =
+      ProductDefinition.publish_routing(scope, 73, product.id, %{
+        operations: [
+          %{
+            code: "LAMINATE",
+            sequence: 1,
+            inputs: [sheet.id, adhesive.id],
+            outputs: [scrap.id],
+            allowed_resource_ids: [context.resource.id]
+          }
+        ]
+      })
+
+    {:ok, lam_order} =
+      ProductionExecution.create_order(scope, 73, %{
+        code: "PO-LAM",
+        kind: "batch",
+        product_id: product.id,
+        formula_version: formula.version,
+        routing_version: routing.version
+      })
+
+    base = execution(context, "ROLL-LAMINATE")
+
+    assert {:ok, mixed} =
+             ProductionExecution.complete_operation(scope, 73, lam_order.id, :live, %{
+               base
+               | operation_code: "LAMINATE",
+                 inputs: [
+                   %{
+                     item_id: sheet.id,
+                     location_id: location.id,
+                     quantity: 40,
+                     observation: "measured",
+                     identity_id: roll_id
+                   },
+                   %{
+                     item_id: adhesive.id,
+                     location_id: location.id,
+                     quantity: 5,
+                     observation: "measured"
+                   }
+                 ],
+                 outputs: []
+             })
+
+    assert {:ok, %{balances: [creation_kg]}} =
+             ProductionExecution.get_run_yield(scope, 73, creation.id)
+
+    assert creation_kg.unit.id == kg.id
+    assert Decimal.eq?(creation_kg.input, 40) and Decimal.eq?(creation_kg.product, 40)
+
+    assert {:ok, %{balances: mixed_balances}} =
+             ProductionExecution.get_run_yield(scope, 73, mixed.id)
+
+    assert %{kg: mixed_kg, litre: mixed_litre} = by_unit(mixed_balances, kg, litre)
+    assert Decimal.eq?(mixed_kg.input, 40) and Decimal.eq?(mixed_kg.product, 0)
+    assert Decimal.eq?(mixed_litre.input, 5) and Decimal.eq?(mixed_litre.product, 0)
+    assert length(mixed_balances) == 2
+
+    assert {:ok, %{runs: [made, drawn]}} =
+             ProductionExecution.get_unit_yield(scope, 73, roll_id)
+
+    assert made.execution_id == creation.id
+    assert [%{unit: %{id: kg_id}, unit_output: made_output}] = made.balances
+    assert kg_id == kg.id and Decimal.eq?(made_output, 40)
+
+    assert drawn.execution_id == mixed.id
+    assert %{kg: drawn_kg, litre: drawn_litre} = by_unit(drawn.balances, kg, litre)
+    assert Decimal.eq?(drawn_kg.unit_input, 40) and Decimal.eq?(drawn_kg.input, 40)
+    assert Decimal.eq?(drawn_litre.unit_input, 0) and Decimal.eq?(drawn_litre.input, 5)
+  end
+
+  defp by_unit(balances, kg, litre) do
+    %{
+      kg: Enum.find(balances, &(&1.unit.id == kg.id)),
+      litre: Enum.find(balances, &(&1.unit.id == litre.id))
+    }
+  end
+
   test "variance without both inputs and outputs is refused", context do
     %{scope: scope, order: order} = context
 

@@ -156,7 +156,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenarioTest do
                &(&1.output_role == "waste" and &1.observation == :measured)
              )
 
-      assert {:ok, yield} = ProductionExecution.get_run_yield(scope, 73, cut.id)
+      assert {:ok, %{balances: [yield]}} = ProductionExecution.get_run_yield(scope, 73, cut.id)
 
       assert Enum.all?(
                [{:input, 49}, {:product, 32}, {:trim, 14}, {:waste, 2}, {:variance, 1}],
@@ -175,7 +175,8 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenarioTest do
 
       unit_yield = Enum.find(unit_runs, &(&1.execution_id == cut.id))
       assert unit_yield.execution_id == cut.id
-      assert Decimal.eq?(unit_yield.unit_input, 49)
+      assert [%{unit_input: unit_input}] = unit_yield.balances
+      assert Decimal.eq?(unit_input, 49)
     end
 
     assert Enum.all?(scenario.cuts, fn {_run, tx} ->

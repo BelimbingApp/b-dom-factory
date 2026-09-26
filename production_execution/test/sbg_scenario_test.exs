@@ -97,7 +97,8 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenarioTest do
              &(&1.role == :variance and Decimal.eq?(&1.native_quantity, 2))
            )
 
-    assert {:ok, slit_yield} = ProductionExecution.get_run_yield(scope, 73, slit.id)
+    assert {:ok, %{balances: [slit_yield]}} =
+             ProductionExecution.get_run_yield(scope, 73, slit.id)
 
     assert Enum.all?(
              [{:input, 125}, {:product, 90}, {:trim, 30}, {:waste, 3}, {:variance, 2}],
@@ -113,8 +114,10 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenarioTest do
     assert Enum.map(unit_runs, & &1.execution_id) == [coat.id, slit.id]
     unit_yield = List.last(unit_runs)
     assert unit_yield.execution_id == slit.id
-    assert Decimal.eq?(unit_yield.unit_input, 125)
-    assert Decimal.eq?(hd(unit_runs).unit_output, 125)
+    assert [%{unit_input: unit_input}] = unit_yield.balances
+    assert Decimal.eq?(unit_input, 125)
+    assert [%{unit_output: unit_output}] = hd(unit_runs).balances
+    assert Decimal.eq?(unit_output, 125)
 
     receipt_identities = MapSet.new(receipts, fn {_sku, {_tx, identity_id}} -> identity_id end)
     receipt_transactions = MapSet.new(receipts, fn {_sku, {tx, _}} -> tx.id end)
@@ -137,7 +140,8 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenarioTest do
       assert location.code == "SLITTER-A"
       assert Decimal.eq?(quantity, if(sku == "SLIT-600", do: 60, else: 30))
 
-      assert {:ok, %{runs: [%{execution_id: execution_id, unit_output: unit_output}]}} =
+      assert {:ok,
+              %{runs: [%{execution_id: execution_id, balances: [%{unit_output: unit_output}]}]}} =
                ProductionExecution.get_unit_yield(scope, 73, roll)
 
       assert execution_id == slit.id

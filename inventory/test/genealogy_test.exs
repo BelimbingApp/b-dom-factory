@@ -27,6 +27,17 @@ defmodule Bilimbi.Factory.Inventory.GenealogyTest do
                )
              )
 
+    for value <- ["Infinity", "-Infinity", "NaN"] do
+      assert {:error, %Ecto.Changeset{}} =
+               Inventory.record_receipt(
+                 scope,
+                 73,
+                 request("DIM-#{value}",
+                   lines: [put_in(line, [:identity, :dimensions, :width, :value], value)]
+                 )
+               )
+    end
+
     assert {:error, %Ecto.Changeset{}} =
              Inventory.record_receipt(
                scope,
