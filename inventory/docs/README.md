@@ -7,7 +7,8 @@ production posting authority that Production Execution declares.
 
 The public contract and its phases are defined in Bilimbi's
 [Inventory module plan](https://github.com/BelimbingApp/bilimbi/blob/main/docs/plans/factory/0010-inventory-module.md).
-Phases 1–3 cover the catalog, ledger, and lot or unit genealogy.
+Phases 1–3 cover the catalog, ledger, and lot or unit genealogy; Phase 4
+proves them against Factory's composition (see [Integration proof](#integration-proof)).
 
 ## Public API
 
@@ -129,6 +130,22 @@ Inventory calls or captures one Inventory keeps internal (`@moduledoc false`,
 such as `Ledger`).
 It needs the whole mounted graph compiled, so a module-folder `mix test`
 excludes it; CI runs it with `mix test --only compiled_graph`.
+
+## Integration proof
+
+These tests hold Inventory's Phase 4 claims:
+
+| Claim | Test |
+| --- | --- |
+| Catalog, ledger, stock positions, and genealogy serve warehouse work in a runtime without Production Execution | `test/standalone_test.exs` |
+| Inventory does not depend on Production Execution: no descriptor dependency, and its catalog, ledger, stock, and genealogy run where Production Execution is not loadable | `test/inventory_test.exs`, `test/standalone_test.exs` |
+| With no authority registered, every production and transform posting is refused and warehouse postings continue | `test/posting_authority_test.exs` |
+| An Extension cannot register (its declaration fails Inventory's boot) or post production context | `test/posting_authority_test.exs` |
+| Production Execution is the declared authority, and its postings carry actual inputs and outputs, opaque context, and the execution's evidence atomically | `test/posting_boundary_test.exs` (compiled graph), `production_execution/test/execution_test.exs`, `production_execution/test/workflow_test.exs` |
+| Distinct factory workflows (a foam extrude-cure-laminate-cut chain and coil slitting) reconcile from Inventory transactions without changing earlier history | `production_execution/test/workflow_test.exs` |
+
+The workflows are test fixtures only; Inventory holds no process rule or
+source mapping for either.
 
 ## Persistence
 

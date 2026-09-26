@@ -35,6 +35,7 @@ defmodule Bilimbi.Factory.Inventory.PostingBoundaryTest do
           module <- modules,
           do: beam!(app, module)
 
+    assert Bilimbi.Factory.ProductionExecution in authorities
     assert violations(beams, authorities, internal()) == []
   end
 
