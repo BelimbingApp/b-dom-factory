@@ -2,8 +2,8 @@ defmodule Bilimbi.Factory.Inventory do
   @moduledoc """
   Factory Inventory's public API: the item master, units of measure, stock
   locations, material identity, item-level unit conversions, the Material
-  Transaction ledger, the production posting-authority registry, and stock
-  positions.
+  Transaction ledger, the production posting-authority registry, stock
+  positions, and lot or unit genealogy.
 
   Every operation takes a `Bilimbi.Base.Tenancy.Scope` and a company ID. The
   company must be live and inside the scope's tenant; a missing, deleted, or
@@ -13,6 +13,7 @@ defmodule Bilimbi.Factory.Inventory do
 
   Stock positions are views over the Material Transaction ledger, which is
   append-only: a mistake is corrected by a new transaction that names it.
+  Identity ancestry is read from the ledger's transform links.
   """
 
   import Ecto.Query
@@ -21,6 +22,8 @@ defmodule Bilimbi.Factory.Inventory do
   alias Bilimbi.Base.Tenancy.Scope
   alias Bilimbi.Core.Company
   alias Bilimbi.Factory.Inventory.Conversion
+  alias Bilimbi.Factory.Inventory.Genealogy
+  alias Bilimbi.Factory.Inventory.Identity
   alias Bilimbi.Factory.Inventory.Item
   alias Bilimbi.Factory.Inventory.Ledger
   alias Bilimbi.Factory.Inventory.Location
@@ -41,6 +44,7 @@ defmodule Bilimbi.Factory.Inventory do
           | :location_not_found
           | :material_not_found
           | :conversion_not_found
+          | :identity_not_found
 
   @type posting_result ::
           {:ok, Transaction.t()} | {:error, :company_not_found | Ledger.error()}
@@ -439,6 +443,29 @@ defmodule Bilimbi.Factory.Inventory do
   @spec record_transform(Scope.t(), pos_integer(), map(), module()) :: posting_result()
   def record_transform(%Scope{} = scope, company_id, request, authority),
     do: post(scope, company_id, :transform, request, authority: authority)
+
+  @doc "Reads one lot or unit identity inside the company."
+  @spec get_identity(Scope.t(), pos_integer(), pos_integer()) ::
+          {:ok, Identity.t()} | {:error, :company_not_found | :identity_not_found}
+  def get_identity(%Scope{} = scope, company_id, identity_id) do
+    with :ok <- live_company(scope, company_id), do: Genealogy.get(company_id, identity_id)
+  end
+
+  @doc "Follows transform links from an output toward its source receipts."
+  @spec trace_backward(Scope.t(), pos_integer(), pos_integer()) ::
+          {:ok, Genealogy.trace()} | {:error, :company_not_found | :identity_not_found}
+  def trace_backward(%Scope{} = scope, company_id, identity_id) do
+    with :ok <- live_company(scope, company_id),
+         do: Genealogy.trace(company_id, identity_id, :backward)
+  end
+
+  @doc "Follows transform links from a receipt toward descendant outputs."
+  @spec trace_forward(Scope.t(), pos_integer(), pos_integer()) ::
+          {:ok, Genealogy.trace()} | {:error, :company_not_found | :identity_not_found}
+  def trace_forward(%Scope{} = scope, company_id, identity_id) do
+    with :ok <- live_company(scope, company_id),
+         do: Genealogy.trace(company_id, identity_id, :forward)
+  end
 
   @spec get_transaction(Scope.t(), pos_integer(), pos_integer()) ::
           {:ok, Transaction.t()} | {:error, :company_not_found | :transaction_not_found}

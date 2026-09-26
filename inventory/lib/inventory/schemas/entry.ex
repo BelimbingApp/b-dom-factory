@@ -12,6 +12,7 @@ defmodule Bilimbi.Factory.Inventory.Schemas.Entry do
     field :transaction_id, :id
     field :role, :string
     field :material_id, :id
+    field :identity_id, :id
     field :location_id, :id
     field :native_quantity, :decimal
     field :native_unit_id, :id

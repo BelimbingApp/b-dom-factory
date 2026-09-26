@@ -7,10 +7,7 @@ production posting authority that Production Execution declares.
 
 The public contract and its phases are defined in Bilimbi's
 [Inventory module plan](https://github.com/BelimbingApp/bilimbi/blob/main/docs/plans/factory/0010-inventory-module.md).
-Phase 1 (catalog, locations, and units) and Phase 2 (the Material
-Transaction ledger and the posting-authority registry) are built. Phase 3's
-lot and unit identities and genealogy reads are not; each transform already
-records the input-to-output links they will read.
+Phases 1–3 cover the catalog, ledger, and lot or unit genealogy.
 
 ## Public API
 
@@ -19,7 +16,7 @@ records the input-to-output links they will read.
 scope's tenant (Core Company's `get_company/2` decides). A record of another
 company is reported as not found. Results are read models (`Item`, `Unit`,
 `Location`, `Material`, `Conversion`, `StockPosition`, `Transaction`,
-`Entry`), never schemas.
+`Entry`, `Identity`), never schemas.
 
 | Area | Operations |
 | --- | --- |
@@ -32,6 +29,7 @@ company is reported as not found. Results are read models (`Item`, `Unit`,
 | Ledger postings | `record_receipt/3`, `record_transfer/3`, `record_consumption/3`, `record_correction/3` |
 | Production postings | `record_output/4`, `record_transform/4`, `record_production_consumption/4`, `record_production_correction/4` |
 | Ledger reads | `get_transaction/3`, `list_transactions/3` |
+| Lot and unit genealogy | `get_identity/3`, `trace_backward/3`, `trace_forward/3` |
 | Posting authority | `posting_authority_registered?/1` |
 
 - **Material identity.** An item becomes a stocked material once, with a
@@ -73,6 +71,25 @@ do not account for. The `record_*` docs on the facade define each request.
   a reconciliation basis, and the difference is recorded as a variance entry.
   For example, 100 kg measured in, 78 kg measured finished, 17 kg derived
   trim, and 2 kg measured waste leave a 3 kg variance.
+
+## Lot and unit identities
+
+A receipt or production output line may create an identity with
+`identity: %{kind: "lot" | "unit", code: "..."}`. The code is unique for that
+material within its company. Subsequent transfer, consumption, or transform
+input lines cite its `identity_id`; a transform output creates a fresh identity.
+When a transform uses any identity, every input and output must be identified.
+Inventory checks both the overall location balance and the balance of the
+specific identity, or the unidentified pool, before a draw. The stock entry
+exposes `identity_id`, while `get_identity/3` returns the immutable code, kind,
+item, and source transaction.
+
+`trace_backward/3` and `trace_forward/3` walk the transform links between
+identities across any number of transformations. They return the root identity,
+the visited identities, `{input_identity_id, output_identity_id,
+transaction_id}` links, and source receipt transactions in `receipts`. Reads
+remain scoped to one live company. Unidentified material remains supported for
+workflows that do not track lots or individual units.
 
 ## Posting authority
 
@@ -118,6 +135,7 @@ excludes it; CI runs it with `mix test --only compiled_graph`.
 | `commerce_inventory_items` | compatible baseline | Belimbing's item master, verified by `SchemaContract` and adopted as is |
 | `factory_inventory_units`, `factory_inventory_locations`, `factory_inventory_materials`, `factory_inventory_unit_conversions` | Bilimbi-only | company-owned; not in the schema contract, because an adopted Belimbing database gets them from `mix bilimbi.migrate` |
 | `factory_inventory_transactions`, `factory_inventory_transaction_entries`, `factory_inventory_genealogy_links` | Bilimbi-only | the ledger; append-only and balance-checked by triggers |
+| `factory_inventory_identities` | Bilimbi-only | immutable lot or unit identities, linked to stock entries and their source transaction |
 
 The item master keeps Belimbing's own columns, including the location-less
 `quantity_on_hand` and free-text `storage_location`. Inventory neither changes

@@ -60,6 +60,10 @@ jobs:
         with:
           path: factory
 
+      - name: Verify migration versions are unique across modules
+        working-directory: factory
+        run: .github/scripts/unique_migration_versions.sh
+
       - name: Read the pinned Bilimbi revision
         id: pin
         working-directory: .
@@ -93,15 +97,17 @@ jobs:
           elixir-version: ${{ steps.tools.outputs.elixir }}
           version-type: strict
 
-      - name: Restore build cache
+      # Only fetched dependencies are cached. The build tree is rebuilt every
+      # run: a `_build` saved after `mix precommit` can list test-support
+      # modules in an application's .app without their .beam, and the posting
+      # boundary test reads each application's module list.
+      - name: Restore dependency cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
-            bilimbi/deps
-            bilimbi/_build/test
-          key: ${{ runner.os }}-beam-mounted-${{ steps.pin.outputs.revision }}-${{ hashFiles('bilimbi/apps/domains/factory/**/mix.exs') }}
+          path: bilimbi/deps
+          key: ${{ runner.os }}-deps-mounted-${{ steps.pin.outputs.revision }}-${{ hashFiles('bilimbi/apps/domains/factory/**/mix.exs') }}
           restore-keys: |
-            ${{ runner.os }}-beam-mounted-${{ steps.pin.outputs.revision }}-
+            ${{ runner.os }}-deps-mounted-${{ steps.pin.outputs.revision }}-
 
       # With a repository mounted and BILIMBI_COMPOSITION_PINNED unset, the first
       # project load derives .scratchpad/composition-lock/mix.lock from the

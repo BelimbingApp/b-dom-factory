@@ -37,6 +37,11 @@ and phases are Bilimbi's `docs/plans/factory/0000-factory-domain.md` and
   `test/support/test_fixtures.ex`, not its migrations (Core Compatibility runs
   those). Mirror a new migration's constraints and triggers there, or a test
   that makes PostgreSQL refuse proves nothing.
+- Lot and unit postings use `identity` on a receipt or output line and
+  `identity_id` on later draws; Inventory's `trace_backward/3` and
+  `trace_forward/3` read the existing transform links. See
+  `inventory/docs/README.md` and `inventory/lib/inventory/genealogy.ex`;
+  do not build a second ancestry store.
 - `ModuleRegistry.installed_modules!/0` raises in a module-folder `mix test`,
   which loads only part of the graph. Read one application's descriptor with
   `Application.get_env(app, :bilimbi_module)`, as
