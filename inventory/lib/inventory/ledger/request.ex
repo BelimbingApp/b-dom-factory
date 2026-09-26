@@ -384,7 +384,14 @@ defmodule Bilimbi.Factory.Inventory.Ledger.Request do
   # A defaulted effective time is left out, so a retry that omits it matches.
   defp fingerprint(kind, changes, lists) do
     changes =
-      Map.update(changes, :receipt_measurement, nil, &normalize_receipt_measurement/1)
+      case Map.fetch(changes, :receipt_measurement) do
+        {:ok, measurement} ->
+          {:ok, fields} = cast_receipt_measurement(measurement)
+          Map.put(changes, :receipt_measurement, fields)
+
+        :error ->
+          changes
+      end
 
     term = {kind, normalize(changes), normalize(lists)}
 

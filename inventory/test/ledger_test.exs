@@ -102,6 +102,36 @@ defmodule Bilimbi.Factory.Inventory.LedgerTest do
       assert Decimal.eq?(quantity(scope, coil, receiving), 70)
     end
 
+    test "replay a weighed receipt whose ticket values differ only in decimal form", context do
+      %{scope: scope, coil: coil, receiving: receiving, kg: kg} = context
+
+      weighed = fn net ->
+        request("R-WEIGHED-RETRY",
+          receipt_measurement: %{
+            supplier_declared: 72,
+            measured_gross: 812,
+            tare: 742,
+            net: net,
+            unit_id: kg.id,
+            weighing_point_ref: "RCV"
+          },
+          lines: [
+            %{
+              item_id: coil.id,
+              location_id: receiving.id,
+              quantity: 70,
+              unit_id: kg.id,
+              observation: "measured"
+            }
+          ]
+        )
+      end
+
+      assert {:ok, %Transaction{id: id}} = Inventory.record_receipt(scope, 73, weighed.("70.0"))
+      assert {:ok, %Transaction{id: ^id}} = Inventory.record_receipt(scope, 73, weighed.(70))
+      assert Decimal.eq?(quantity(scope, coil, receiving), 70)
+    end
+
     test "reject weigh-ticket net that differs from the measured stock line", context do
       %{scope: scope, coil: coil, receiving: receiving, kg: kg} = context
 
