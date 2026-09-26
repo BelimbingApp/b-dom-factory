@@ -25,6 +25,11 @@
   `test/support/mr_packaging_scenario.ex` and `docs/mr-packaging-scenario.md`;
   use Factory facades for postings and leave customer process rules out of
   Inventory.
+- For SBG glue, coating, and slitting, use the public import and trace path in
+  `test/support/sbg_scenario.ex` and `docs/sbg-scenario.md`. Product Definition
+  accepts only its documented `process_config` keys; keep unconfirmed reactor,
+  cleaning, and source fields in a fixture until a generic public contract is
+  agreed, rather than hiding them in another configuration key.
 
 ## Maintaining this file
 
