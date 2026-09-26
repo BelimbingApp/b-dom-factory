@@ -236,6 +236,56 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
              ProductionExecution.trace_backward(scope, 74, first_output_id)
   end
 
+  test "forward trace includes runs that drew a lot without an identified output", context do
+    %{scope: scope, order: order, coil: coil, receiving: location} = context
+
+    assert {:ok, receipt} =
+             Inventory.record_receipt(
+               scope,
+               73,
+               request("COIL-A-RECEIPT",
+                 lines: [
+                   %{
+                     item_id: coil.id,
+                     location_id: location.id,
+                     quantity: 100,
+                     observation: "measured",
+                     identity: %{kind: "lot", code: "COIL-A"}
+                   }
+                 ]
+               )
+             )
+
+    coil_a = hd(receipt.entries).identity_id
+    attrs = execution(context, "COIL-A-SLIT", 40)
+    attrs = %{attrs | inputs: [Map.put(hd(attrs.inputs), :identity_id, coil_a)]}
+
+    assert {:error, :identity_required} =
+             ProductionExecution.complete_operation(scope, 73, order.id, :live, attrs)
+
+    assert {:ok, slit} =
+             ProductionExecution.complete_operation(scope, 73, order.id, :live, %{
+               attrs
+               | outputs: []
+             })
+
+    consume = execution(context, "COIL-A-CONSUME", 30)
+
+    assert {:ok, consumption} =
+             ProductionExecution.complete_operation(scope, 73, order.id, :import, %{
+               consume
+               | inputs: [Map.put(hd(consume.inputs), :identity_id, coil_a)],
+                 outputs: []
+             })
+
+    assert {:ok, forward} = ProductionExecution.trace_forward(scope, 73, coil_a)
+    assert forward.material.links == []
+
+    assert Enum.sort(Enum.map(forward.runs, & &1.id)) == Enum.sort([slit.id, consumption.id])
+    assert {:ok, backward} = ProductionExecution.trace_backward(scope, 73, coil_a)
+    assert backward.runs == []
+  end
+
   test "variance without both inputs and outputs is refused", context do
     %{scope: scope, order: order} = context
 

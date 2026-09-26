@@ -467,6 +467,15 @@ defmodule Bilimbi.Factory.Inventory do
          do: Genealogy.trace(company_id, identity_id, :forward)
   end
 
+  @doc "Lists the consumptions and transforms that drew the identity, in ID order."
+  @spec list_identity_draws(Scope.t(), pos_integer(), pos_integer()) ::
+          {:ok, [Transaction.t()]} | {:error, :company_not_found | :identity_not_found}
+  def list_identity_draws(%Scope{} = scope, company_id, identity_id) do
+    with :ok <- live_company(scope, company_id),
+         {:ok, identity} <- Genealogy.get(company_id, identity_id),
+         do: {:ok, Ledger.draws(company_id, identity.id)}
+  end
+
   @spec get_transaction(Scope.t(), pos_integer(), pos_integer()) ::
           {:ok, Transaction.t()} | {:error, :company_not_found | :transaction_not_found}
   def get_transaction(%Scope{} = scope, company_id, transaction_id) do

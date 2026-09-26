@@ -47,4 +47,6 @@ visited identities, transform links, and source receipts. Each run contains
 the execution ID, order or batch, operation code, resource, timing, source,
 and Inventory transaction ID. Runs are ordered by completion time and ID.
 The view joins executions by the Inventory transaction IDs on visited
-identities and links. Inventory alone stores material ancestry.
+identities and links; a forward trace also joins the consumptions and
+transforms that drew a visited identity (`Inventory.list_identity_draws/3`),
+so a run without an identified output still appears. Inventory alone stores material ancestry.

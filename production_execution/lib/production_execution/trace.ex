@@ -15,10 +15,12 @@ defmodule Bilimbi.Factory.ProductionExecution.Trace do
         :forward -> Inventory.trace_forward(scope, company_id, identity_id)
       end
 
-    with {:ok, genealogy} <- trace do
+    with {:ok, genealogy} <- trace,
+         {:ok, draws} <- draws(scope, company_id, genealogy.identities, direction) do
       transaction_ids =
         (Enum.map(genealogy.identities, & &1.source_transaction_id) ++
-           Enum.map(genealogy.links, fn {_, _, transaction_id} -> transaction_id end))
+           Enum.map(genealogy.links, fn {_, _, transaction_id} -> transaction_id end) ++
+           Enum.map(draws, & &1.id))
         |> Enum.uniq()
 
       executions =
@@ -59,5 +61,16 @@ defmodule Bilimbi.Factory.ProductionExecution.Trace do
 
       {:ok, %{material: genealogy, runs: runs}}
     end
+  end
+
+  defp draws(_scope, _company_id, _identities, :backward), do: {:ok, []}
+
+  defp draws(scope, company_id, identities, :forward) do
+    Enum.reduce_while(identities, {:ok, []}, fn identity, {:ok, acc} ->
+      case Inventory.list_identity_draws(scope, company_id, identity.id) do
+        {:ok, transactions} -> {:cont, {:ok, transactions ++ acc}}
+        error -> {:halt, error}
+      end
+    end)
   end
 end
