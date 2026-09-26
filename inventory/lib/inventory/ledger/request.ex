@@ -32,7 +32,9 @@ defmodule Bilimbi.Factory.Inventory.Ledger.Request do
     conversion_version: :integer,
     observation: :string,
     evidence: :string,
-    output_role: :string
+    output_role: :string,
+    identity_id: :integer,
+    identity: :map
   }
 
   @observations ~w(measured declared counted derived)
@@ -190,6 +192,8 @@ defmodule Bilimbi.Factory.Inventory.Ledger.Request do
       |> validate_length(:evidence, max: @text_limit)
       |> validate_length(:output_role, max: 64)
       |> validate_number(:conversion_version, greater_than: 0)
+      |> validate_number(:identity_id, greater_than: 0)
+      |> validate_change(:identity, &identity/2)
       |> validate_change(:quantity, &quantity(&1, &2, line_kind))
       |> distinct_locations(line_kind)
 
@@ -211,7 +215,26 @@ defmodule Bilimbi.Factory.Inventory.Ledger.Request do
 
   defp line(_line, _line_kind), do: {:error, ["must be a map"]}
 
-  @common [:item_id, :quantity, :unit_id, :conversion_version, :observation, :evidence]
+  @common [
+    :item_id,
+    :quantity,
+    :unit_id,
+    :conversion_version,
+    :observation,
+    :evidence,
+    :identity_id,
+    :identity
+  ]
+
+  defp identity(:identity, value) do
+    kind = value[:kind] || value["kind"]
+    code = value[:code] || value["code"]
+
+    if kind in ["lot", "unit"] and is_binary(code) and String.trim(code) != "" and
+         byte_size(code) <= 255 and map_size(value) == 2,
+       do: [],
+       else: [identity: "needs kind (lot or unit) and a non-empty code of at most 255 bytes"]
+  end
 
   defp line_fields(:transfer), do: [:from_location_id, :to_location_id | @common]
   defp line_fields(:output), do: [:location_id, :output_role | @common]

@@ -12,7 +12,7 @@ Bilimbi checkout; it does not build on its own.
 | [`production_execution/`](production_execution/docs/README.md) | `factory/production_execution` | actual work and its Inventory postings; depends on `factory/inventory` |
 
 Inventory has its catalog, locations, units, stock positions, Material
-Transaction ledger, and production posting-authority registry; Product
+Transaction ledger, lot and unit genealogy, and production posting-authority registry; Product
 Definition has Phase 1 product, Formula/BOM and routing revisions;
 Production Execution remains a scaffold. Their scope
 and phases are in Bilimbi's

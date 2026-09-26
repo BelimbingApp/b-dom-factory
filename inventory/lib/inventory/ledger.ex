@@ -35,6 +35,11 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
           | :mixed_native_units
           | :variance_required
           | :no_variance
+          | :identity_not_found
+          | :identity_required
+          | :invalid_identity
+          | :insufficient_identity_stock
+          | :insufficient_unidentified_stock
           | Ecto.Changeset.t()
 
   @spec post(pos_integer(), Transaction.kind(), map(), keyword()) ::
@@ -130,7 +135,10 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
          :ok <- fresh(company_id, request),
          {:ok, locations} <- locations(company_id, request),
          {:ok, plan} <- plan(company_id, kind, request, materials, locations),
-         :ok <- stock_suffices(company_id, plan.entries) do
+         :ok <- validate_identities(company_id, kind, plan.entries),
+         :ok <- stock_suffices(company_id, plan.entries),
+         :ok <- identity_stock_suffices(company_id, plan.entries),
+         :ok <- unidentified_stock_suffices(company_id, plan.entries) do
       insert(company_id, kind, request, authority, plan)
     else
       {:replay, transaction_id} -> {:ok, transaction_id}
@@ -320,6 +328,8 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
          recorded_unit_id: recorded_unit_id,
          conversion_id: conversion_id,
          observation: line.observation,
+         identity_id: line[:identity_id],
+         new_identity: line[:identity],
          output_role: line[:output_role],
          evidence: line[:evidence],
          reconciliation_basis: nil
@@ -375,6 +385,8 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
         recorded_unit_id: nil,
         conversion_id: nil,
         observation: nil,
+        identity_id: nil,
+        new_identity: nil,
         output_role: nil,
         evidence: nil
     }
@@ -415,6 +427,8 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
              recorded_unit_id: nil,
              conversion_id: nil,
              observation: nil,
+             identity_id: nil,
+             new_identity: nil,
              output_role: nil,
              evidence: evidence.evidence,
              reconciliation_basis: evidence.reconciliation_basis
@@ -467,17 +481,9 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
     }
 
     with {:ok, transaction} <-
-           attributes |> Schemas.Transaction.creation_changeset() |> Repo.insert() do
-      entry_ids =
-        Enum.map(plan.entries, fn entry ->
-          %Schemas.Entry{}
-          |> Ecto.Changeset.change(
-            Map.merge(entry, %{company_id: company_id, transaction_id: transaction.id})
-          )
-          |> Repo.insert!()
-          |> Map.fetch!(:id)
-        end)
-        |> List.to_tuple()
+           attributes |> Schemas.Transaction.creation_changeset() |> Repo.insert(),
+         {:ok, entry_ids} <- insert_entries(company_id, transaction.id, plan.entries) do
+      entry_ids = List.to_tuple(entry_ids)
 
       Enum.each(plan.links, fn {input, output} ->
         Repo.insert!(%Schemas.GenealogyLink{
@@ -498,6 +504,138 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
           _other -> {:error, changeset}
         end
     end
+  end
+
+  defp insert_entries(company_id, transaction_id, entries) do
+    map_ok(entries, fn entry ->
+      with {:ok, identity_id} <- insert_identity(company_id, transaction_id, entry) do
+        entry =
+          entry
+          |> Map.drop([:new_identity])
+          |> Map.put(:identity_id, identity_id)
+          |> Map.merge(%{company_id: company_id, transaction_id: transaction_id})
+
+        %Schemas.Entry{}
+        |> Ecto.Changeset.change(entry)
+        |> Repo.insert()
+        |> case do
+          {:ok, row} -> {:ok, row.id}
+          error -> error
+        end
+      end
+    end)
+  end
+
+  defp insert_identity(_company_id, _transaction_id, %{new_identity: nil, identity_id: id}),
+    do: {:ok, id}
+
+  defp insert_identity(company_id, transaction_id, entry) do
+    identity = entry.new_identity
+
+    %{
+      company_id: company_id,
+      material_id: entry.material_id,
+      source_transaction_id: transaction_id,
+      kind: identity[:kind] || identity["kind"],
+      code: identity[:code] || identity["code"]
+    }
+    |> Schemas.Identity.creation_changeset()
+    |> Repo.insert()
+    |> case do
+      {:ok, row} -> {:ok, row.id}
+      error -> error
+    end
+  end
+
+  defp validate_identities(company_id, kind, entries) do
+    stock = Enum.filter(entries, &(&1.role == "stock"))
+
+    cond do
+      Enum.any?(stock, &(&1.identity_id && &1.new_identity)) ->
+        {:error, :invalid_identity}
+
+      Enum.any?(stock, fn entry ->
+        entry.new_identity &&
+            not (Decimal.positive?(entry.native_quantity) and
+                     kind in [:receipt, :output, :transform])
+      end) ->
+        {:error, :invalid_identity}
+
+      kind in [:receipt, :output] and Enum.any?(stock, & &1.identity_id) ->
+        {:error, :invalid_identity}
+
+      kind == :transform and
+          Enum.any?(stock, &(Decimal.positive?(&1.native_quantity) and &1.identity_id)) ->
+        {:error, :invalid_identity}
+
+      kind == :transform and Enum.any?(stock, &(&1.identity_id || &1.new_identity)) and
+          Enum.any?(stock, &(is_nil(&1.identity_id) and is_nil(&1.new_identity))) ->
+        {:error, :identity_required}
+
+      true ->
+        ids = stock |> Enum.map(& &1.identity_id) |> Enum.reject(&is_nil/1) |> Enum.uniq()
+
+        found =
+          from(identity in Schemas.Identity,
+            where: identity.company_id == ^company_id and identity.id in ^ids
+          )
+          |> Repo.all()
+          |> Map.new(&{&1.id, &1})
+
+        if Enum.all?(stock, fn entry ->
+             entry.identity_id == nil or
+               (found[entry.identity_id] &&
+                  found[entry.identity_id].material_id == entry.material_id)
+           end),
+           do: :ok,
+           else: {:error, :identity_not_found}
+    end
+  end
+
+  defp identity_stock_suffices(company_id, entries) do
+    entries
+    |> Enum.filter(
+      &((&1.role == "stock" and &1.identity_id) && Decimal.negative?(&1.native_quantity))
+    )
+    |> Enum.group_by(&{&1.identity_id, &1.location_id}, &Decimal.abs(&1.native_quantity))
+    |> Enum.all?(fn {{identity_id, location_id}, drawn} ->
+      available =
+        from(entry in Schemas.Entry,
+          where:
+            entry.company_id == ^company_id and entry.role == "stock" and
+              entry.identity_id == ^identity_id and entry.location_id == ^location_id,
+          select: coalesce(sum(entry.native_quantity), 0)
+        )
+        |> Repo.one()
+        |> Decimal.new()
+
+      Decimal.compare(available, Enum.reduce(drawn, &Decimal.add/2)) != :lt
+    end)
+    |> if(do: :ok, else: {:error, :insufficient_identity_stock})
+  end
+
+  defp unidentified_stock_suffices(company_id, entries) do
+    entries
+    |> Enum.filter(
+      &(&1.role == "stock" and is_nil(&1.identity_id) and
+          Decimal.negative?(&1.native_quantity))
+    )
+    |> Enum.group_by(&{&1.material_id, &1.location_id}, &Decimal.abs(&1.native_quantity))
+    |> Enum.all?(fn {{material_id, location_id}, drawn} ->
+      available =
+        from(entry in Schemas.Entry,
+          where:
+            entry.company_id == ^company_id and entry.role == "stock" and
+              is_nil(entry.identity_id) and entry.material_id == ^material_id and
+              entry.location_id == ^location_id,
+          select: coalesce(sum(entry.native_quantity), 0)
+        )
+        |> Repo.one()
+        |> Decimal.new()
+
+      Decimal.compare(available, Enum.reduce(drawn, &Decimal.add/2)) != :lt
+    end)
+    |> if(do: :ok, else: {:error, :insufficient_unidentified_stock})
   end
 
   # Every position a posting draws down must hold, before the posting, all it
@@ -622,6 +760,7 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
       id: entry.id,
       role: Map.fetch!(@roles, entry.role),
       item_id: item_id,
+      identity_id: entry.identity_id,
       location_id: entry.location_id,
       native_quantity: entry.native_quantity,
       native_unit: Map.fetch!(units, entry.native_unit_id),

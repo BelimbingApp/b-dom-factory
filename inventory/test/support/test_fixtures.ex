@@ -133,6 +133,7 @@ defmodule Bilimbi.Factory.Inventory.TestFixtures do
         transaction_id bigint NOT NULL REFERENCES factory_inventory_transactions (id),
         role varchar(16) NOT NULL,
         material_id bigint REFERENCES factory_inventory_materials (id),
+        identity_id bigint,
         location_id bigint REFERENCES factory_inventory_locations (id),
         native_quantity numeric(36, 12) NOT NULL,
         native_unit_id bigint NOT NULL REFERENCES factory_inventory_units (id),
@@ -160,6 +161,8 @@ defmodule Bilimbi.Factory.Inventory.TestFixtures do
         ),
         CONSTRAINT factory_inventory_transaction_entries_observation
           CHECK (observation IN ('measured', 'declared', 'counted', 'derived')),
+        CONSTRAINT factory_inventory_transaction_entries_identity_stock
+          CHECK (identity_id IS NULL OR role = 'stock'),
         CONSTRAINT factory_inventory_transaction_entries_quantities CHECK (
           native_quantity <> 0 AND (recorded_quantity IS NULL OR recorded_quantity > 0)
         )
@@ -175,6 +178,41 @@ defmodule Bilimbi.Factory.Inventory.TestFixtures do
         CONSTRAINT factory_inventory_genealogy_links_input_output_unique
           UNIQUE (input_entry_id, output_entry_id)
       ) ON COMMIT PRESERVE ROWS
+      """,
+      """
+      CREATE TEMPORARY TABLE factory_inventory_identities (
+        id bigserial PRIMARY KEY,
+        company_id bigint NOT NULL REFERENCES companies (id),
+        material_id bigint NOT NULL REFERENCES factory_inventory_materials (id),
+        source_transaction_id bigint NOT NULL REFERENCES factory_inventory_transactions (id),
+        kind varchar(8) NOT NULL,
+        code varchar(255) NOT NULL,
+        CONSTRAINT factory_inventory_identities_company_id_material_id_code_index
+          UNIQUE (company_id, material_id, code),
+        CONSTRAINT factory_inventory_identities_kind CHECK (kind IN ('lot', 'unit'))
+      ) ON COMMIT PRESERVE ROWS
+      """,
+      "ALTER TABLE factory_inventory_transaction_entries ADD CONSTRAINT factory_inventory_transaction_entries_identity_id_fkey FOREIGN KEY (identity_id) REFERENCES factory_inventory_identities (id)",
+      """
+      CREATE FUNCTION pg_temp.factory_inventory_check_identity_entry() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.identity_id IS NOT NULL AND NOT EXISTS (
+          SELECT 1 FROM factory_inventory_identities identity
+          WHERE identity.id = NEW.identity_id AND identity.company_id = NEW.company_id
+            AND identity.material_id = NEW.material_id
+        ) THEN
+          RAISE EXCEPTION 'identity does not belong to the stock entry material and company'
+            USING ERRCODE = 'check_violation';
+        END IF;
+        RETURN NEW;
+      END
+      $$
+      """,
+      """
+      CREATE TRIGGER factory_inventory_transaction_entries_identity
+        BEFORE INSERT ON factory_inventory_transaction_entries
+        FOR EACH ROW EXECUTE FUNCTION pg_temp.factory_inventory_check_identity_entry()
       """,
       """
       CREATE FUNCTION pg_temp.factory_inventory_ledger_refuse_change() RETURNS trigger
@@ -224,7 +262,8 @@ defmodule Bilimbi.Factory.Inventory.TestFixtures do
         table <- [
           "factory_inventory_transactions",
           "factory_inventory_transaction_entries",
-          "factory_inventory_genealogy_links"
+          "factory_inventory_genealogy_links",
+          "factory_inventory_identities"
         ],
         statement <- [
           "CREATE TRIGGER #{table}_append_only BEFORE UPDATE OR DELETE ON #{table} " <>
