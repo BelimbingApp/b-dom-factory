@@ -41,12 +41,17 @@ both live commands (`source: :live`) and historical imports
   mismatched, or future source is refused. Inventory verifies that the named
   identity still holds the consumed quantity at the location. An identified
   transform input also requires identified outputs.
-- For early consumption, provide `hold_override` with `actor_type` (`"user"`
-  or `"agent"`), `actor_id`, and a nonblank `reason`. An agent also supplies
-  `acting_for_user_id`. Base Authz must grant
-  `factory.production-execution.material-hold.override` to that actor.
-  `list_hold_overrides/3` returns the actor, time, reason, identity,
-  execution, and Inventory transaction after commit.
+- For early consumption, provide `hold_override` with `actor`, the
+  authenticated `Bilimbi.Base.Authz.Actor` of the calling edge, and a
+  nonblank `reason`. The actor must belong to the scope's tenant and the
+  execution's company; a bare `actor_type`/`actor_id` is refused. Base Authz
+  must grant `factory.production-execution.material-hold.override` to that
+  actor, whose type, ID, and `acting_for_user_id` are recorded. An import
+  also supplies the historical override's source `evidence`; its row is
+  recorded with `source: "import"` and the importing principal as its actor,
+  not as the approver. `list_hold_overrides/3` returns the source, actor,
+  time, reason, evidence, identity, execution, and Inventory transaction
+  after commit.
 
 The facade posts through Inventory's named production functions, carrying
 opaque execution, order/batch, and resource references. Execution and material

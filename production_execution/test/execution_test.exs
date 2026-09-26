@@ -187,61 +187,92 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
              ProductionExecution.complete_operation(scope, 73, order.id, :live, attrs)
   end
 
-  test "hold override requires a reason and the declared capability", context do
-    authz_tables!()
-    {order, attrs} = held_order(context)
-
-    missing_reason =
-      Map.put(attrs, :hold_override, %{actor_type: "user", actor_id: 9, reason: " "})
-
-    assert {:error, :invalid_hold_override} =
-             ProductionExecution.complete_operation(
-               context.scope,
-               73,
-               order.id,
-               :live,
-               missing_reason
-             )
-
-    unauthorized =
-      Map.put(attrs, :hold_override, %{actor_type: "user", actor_id: 9, reason: "urgent"})
-
-    assert {:error, :hold_override_denied} =
-             ProductionExecution.complete_operation(
-               context.scope,
-               73,
-               order.id,
-               :live,
-               unauthorized
-             )
-
-    assert [] = Repo.all(Bilimbi.Factory.ProductionExecution.HoldOverride)
-  end
-
-  test "authorized override records the affected source atomically with consumption", context do
-    authz_tables!()
-    {order, attrs} = held_order(context)
-
+  defp grant_override!(context, user_id) do
     assert {:ok, :stored} =
              Authz.put_principal_capability(
                context.scope,
                73,
                :user,
-               9,
+               user_id,
                "factory.production-execution.material-hold.override",
                true
              )
+  end
 
-    attrs =
-      Map.put(attrs, :hold_override, %{actor_type: "user", actor_id: 9, reason: "Batch release"})
+  defp complete(context, order, attrs, source \\ :live),
+    do: ProductionExecution.complete_operation(context.scope, 73, order.id, source, attrs)
 
-    assert {:ok, completed} =
-             ProductionExecution.complete_operation(context.scope, 73, order.id, :live, attrs)
+  test "hold override requires a reason and the declared capability", context do
+    authz_tables!()
+    {order, attrs} = held_order(context)
+    actor = Authz.actor(:user, 10, context.scope, 73)
+
+    assert {:error, :invalid_hold_override} =
+             complete(
+               context,
+               order,
+               Map.put(attrs, :hold_override, %{actor: actor, reason: " "})
+             )
+
+    assert {:error, :hold_override_denied} =
+             complete(
+               context,
+               order,
+               Map.put(attrs, :hold_override, %{actor: actor, reason: "urgent"})
+             )
+
+    assert [] = Repo.all(Bilimbi.Factory.ProductionExecution.HoldOverride)
+  end
+
+  test "a caller-named privileged actor is refused without the authenticated principal",
+       context do
+    authz_tables!()
+    grant_override!(context, 9)
+    {order, attrs} = held_order(context)
+
+    assert {:error, :hold_override_unauthenticated} =
+             complete(
+               context,
+               order,
+               Map.put(attrs, :hold_override, %{actor_type: "user", actor_id: 9, reason: "urgent"})
+             )
+
+    principal = Authz.actor(:user, 10, context.scope, 73)
+
+    assert {:error, :invalid_hold_override} =
+             complete(
+               context,
+               order,
+               Map.put(attrs, :hold_override, %{actor: principal, actor_id: 9, reason: "urgent"})
+             )
+
+    other_company = Authz.actor(:user, 9, context.scope, 74)
+
+    assert {:error, :hold_override_actor_mismatch} =
+             complete(
+               context,
+               order,
+               Map.put(attrs, :hold_override, %{actor: other_company, reason: "urgent"})
+             )
+
+    assert [] = Repo.all(Bilimbi.Factory.ProductionExecution.HoldOverride)
+    assert [] = Repo.all(Bilimbi.Factory.ProductionExecution.Schemas.Execution)
+  end
+
+  test "authorized override records the affected source atomically with consumption", context do
+    authz_tables!()
+    grant_override!(context, 9)
+    {order, attrs} = held_order(context)
+    actor = Authz.actor(:user, 9, context.scope, 73)
+    attrs = Map.put(attrs, :hold_override, %{actor: actor, reason: "Batch release"})
+
+    assert {:ok, completed} = complete(context, order, attrs)
 
     assert {:ok, [override]} =
              ProductionExecution.list_hold_overrides(context.scope, 73, completed.id)
 
     assert override.actor_type == "user" and override.actor_id == 9
+    assert override.source == "live" and is_nil(override.evidence)
     assert override.reason == "Batch release"
     assert override.identity_id == hd(attrs.inputs).identity_id
     assert override.source_transaction_id == context.receipt.id
@@ -251,6 +282,7 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
              Inventory.get_transaction(context.scope, 73, completed.inventory_transaction_id)
 
     assert transaction.kind == :transform
+    assert {:ok, ^completed} = complete(context, order, attrs)
 
     assert_raise Postgrex.Error, fn ->
       SQL.query!(
@@ -261,22 +293,77 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
     end
   end
 
+  test "an imported override carries its source evidence and is recorded as imported",
+       context do
+    authz_tables!()
+    grant_override!(context, 9)
+    {order, attrs} = held_order(context)
+    importer = Authz.actor(:user, 9, context.scope, 73)
+
+    assert {:error, :invalid_hold_override} =
+             complete(
+               context,
+               order,
+               Map.put(attrs, :hold_override, %{actor: importer, reason: "Batch release"}),
+               :import
+             )
+
+    attrs =
+      Map.put(attrs, :hold_override, %{
+        actor: importer,
+        reason: "Batch release",
+        evidence: "Legacy MES override 4411 by QA lead"
+      })
+
+    assert {:error, :invalid_hold_override} = complete(context, order, attrs, :live)
+    assert {:ok, completed} = complete(context, order, attrs, :import)
+
+    assert {:ok, [override]} =
+             ProductionExecution.list_hold_overrides(context.scope, 73, completed.id)
+
+    assert override.source == "import"
+    assert override.evidence == "Legacy MES override 4411 by QA lead"
+  end
+
+  test "one override decision is logged per affected unit", context do
+    authz_tables!()
+    grant_override!(context, 9)
+    {order, attrs} = held_order(context)
+    [input] = attrs.inputs
+    half = %{input | quantity: 50}
+
+    attrs =
+      attrs
+      |> Map.put(:inputs, [half, half])
+      |> Map.put(:hold_override, %{
+        actor: Authz.actor(:user, 9, context.scope, 73),
+        reason: "Batch release"
+      })
+
+    assert {:ok, completed} = complete(context, order, attrs)
+
+    assert {:ok, [_override]} =
+             ProductionExecution.list_hold_overrides(context.scope, 73, completed.id)
+
+    assert %{rows: [[1]]} =
+             SQL.query!(
+               Repo,
+               "SELECT count(*) FROM base_authz_decision_logs WHERE capability = $1",
+               ["factory.production-execution.material-hold.override"]
+             )
+  end
+
   test "failed posting leaves neither override nor consumption", context do
     authz_tables!()
     {order, attrs} = held_order(context)
 
-    assert {:ok, :stored} =
-             Authz.put_principal_capability(
-               context.scope,
-               73,
-               :user,
-               9,
-               "factory.production-execution.material-hold.override",
-               true
-             )
+    grant_override!(context, 9)
 
     attrs =
-      Map.put(attrs, :hold_override, %{actor_type: "user", actor_id: 9, reason: "Batch release"})
+      Map.put(attrs, :hold_override, %{
+        actor: Authz.actor(:user, 9, context.scope, 73),
+        reason: "Batch release"
+      })
 
     attrs = put_in(attrs.inputs, [%{hd(attrs.inputs) | quantity: 101}])
 
@@ -296,18 +383,13 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
     authz_tables!()
     {order, attrs} = held_order(context)
 
-    assert {:ok, :stored} =
-             Authz.put_principal_capability(
-               context.scope,
-               73,
-               :user,
-               9,
-               "factory.production-execution.material-hold.override",
-               true
-             )
+    grant_override!(context, 9)
 
     attrs =
-      Map.put(attrs, :hold_override, %{actor_type: "user", actor_id: 9, reason: "Batch release"})
+      Map.put(attrs, :hold_override, %{
+        actor: Authz.actor(:user, 9, context.scope, 73),
+        reason: "Batch release"
+      })
 
     SQL.query!(
       Repo,

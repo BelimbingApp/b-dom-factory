@@ -28,10 +28,12 @@ defmodule Bilimbi.Factory.ProductionExecution.Migrations.CreateMaterialHoldOverr
       )
 
       add(:item_id, references(:commerce_inventory_items, on_delete: :restrict), null: false)
+      add(:source, :string, null: false)
       add(:actor_type, :string, null: false)
       add(:actor_id, :bigint, null: false)
       add(:acting_for_user_id, :bigint)
       add(:reason, :text, null: false)
+      add(:evidence, :text)
       add(:occurred_at, :utc_datetime_usec, null: false)
     end
 
@@ -40,6 +42,14 @@ defmodule Bilimbi.Factory.ProductionExecution.Migrations.CreateMaterialHoldOverr
     create(
       constraint(:factory_material_hold_overrides, :factory_material_hold_overrides_reason,
         check: "length(btrim(reason)) > 0"
+      )
+    )
+
+    create(
+      constraint(:factory_material_hold_overrides, :factory_material_hold_overrides_source,
+        check:
+          "(source = 'live' AND evidence IS NULL) OR " <>
+            "(source = 'import' AND length(btrim(evidence)) > 0)"
       )
     )
 
