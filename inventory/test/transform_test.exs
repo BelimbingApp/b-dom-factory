@@ -80,7 +80,7 @@ defmodule Bilimbi.Factory.Inventory.TransformTest do
 
     assert {:ok, %Transaction{kind: :transform} = transform} =
              Inventory.record_transform(scope, 73, slitting(context),
-               authority: TestPostingAuthority.credential()
+               authority: TestPostingAuthority
              )
 
     assert transform.posting_authority == inspect(TestPostingAuthority)
@@ -150,7 +150,7 @@ defmodule Bilimbi.Factory.Inventory.TransformTest do
 
   test "a difference needs a variance, and a variance needs a difference", context do
     %{scope: scope, sheet: sheet, slitter: line} = context
-    authority = [authority: TestPostingAuthority.credential()]
+    authority = [authority: TestPostingAuthority]
 
     assert {:error, :variance_required} =
              Inventory.record_transform(scope, 73, slitting(context, variance: nil), authority)
@@ -192,11 +192,36 @@ defmodule Bilimbi.Factory.Inventory.TransformTest do
                scope,
                73,
                slitting(context, inputs: [%{input | quantity: 101}]),
-               authority: TestPostingAuthority.credential()
+               authority: TestPostingAuthority
              )
 
     assert Decimal.eq?(quantity(scope, coil, receiving), 100)
     assert Decimal.eq?(quantity(scope, sheet, line), 0)
+  end
+
+  test "an output at a drawn position never covers the draw", context do
+    %{scope: scope, coil: coil, receiving: receiving} = context
+    [input] = slitting(context).inputs
+
+    assert {:error, :insufficient_stock} =
+             Inventory.record_transform(
+               scope,
+               73,
+               slitting(context,
+                 inputs: [%{input | quantity: 150}],
+                 outputs: [
+                   %{
+                     item_id: coil.id,
+                     location_id: receiving.id,
+                     quantity: 60,
+                     observation: "measured"
+                   }
+                 ]
+               ),
+               authority: TestPostingAuthority
+             )
+
+    assert Decimal.eq?(quantity(scope, coil, receiving), 100)
   end
 
   test "refuses inputs and outputs that do not share a native unit", context do
@@ -211,7 +236,7 @@ defmodule Bilimbi.Factory.Inventory.TransformTest do
 
     assert {:error, :mixed_native_units} =
              Inventory.record_transform(scope, 73, slitting(context, outputs: outputs),
-               authority: TestPostingAuthority.credential()
+               authority: TestPostingAuthority
              )
   end
 

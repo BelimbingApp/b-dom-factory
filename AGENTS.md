@@ -41,6 +41,10 @@ and phases are Bilimbi's `docs/plans/factory/0000-factory-domain.md` and
   which loads only part of the graph. Read one application's descriptor with
   `Application.get_env(app, :bilimbi_module)`, as
   `inventory/lib/inventory/posting_authority.ex` does.
+- Module discovery refuses any `bilimbi.module.exs` key beyond the
+  descriptor's own. Carry extra composition metadata in the module's
+  `mix.exs` application env beside `MixDiscovery.application_env/1`, as a
+  production posting authority is declared (`inventory/docs/README.md`).
 - Never commit a lock file here. Mounted builds share Bilimbi's ignored
   `.scratchpad/composition-lock/` overlay (`mix/composition_lock.exs`).
 - CI is `.github/workflows/ci.yml`; the Bilimbi revision it builds against is

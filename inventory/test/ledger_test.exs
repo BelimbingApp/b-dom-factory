@@ -44,11 +44,13 @@ defmodule Bilimbi.Factory.Inventory.LedgerTest do
     test "record a balanced transaction with its actor, evidence, and times", context do
       %{scope: scope, coil: coil, receiving: receiving, kg: kg} = context
 
-      assert %Transaction{kind: :receipt, actor_type: "user", actor_id: 9} = receipt =
+      assert %Transaction{kind: :receipt, actor_type: "user", actor_id: 9} =
+               receipt =
                receive!(context, "R-1", "120.5")
 
       assert receipt.evidence == "GRN-R-1"
       assert receipt.request_id == "R-1"
+
       assert receipt.effective_at == receipt.recorded_at or
                DateTime.before?(receipt.effective_at, receipt.recorded_at)
 
@@ -121,7 +123,11 @@ defmodule Bilimbi.Factory.Inventory.LedgerTest do
       future = DateTime.add(DateTime.utc_now(), 1, :hour)
 
       assert {:error, %Ecto.Changeset{} = changeset} =
-               Inventory.record_receipt(scope, 73, request("R-2", effective_at: future, lines: [line]))
+               Inventory.record_receipt(
+                 scope,
+                 73,
+                 request("R-2", effective_at: future, lines: [line])
+               )
 
       assert %{effective_at: [_]} = errors_on(changeset)
     end
@@ -157,8 +163,18 @@ defmodule Bilimbi.Factory.Inventory.LedgerTest do
                  request("R-1",
                    actor_type: nil,
                    lines: [
-                     %{item_id: coil.id, location_id: receiving.id, quantity: 1, observation: "measured"},
-                     %{item_id: coil.id, location_id: receiving.id, quantity: 0, observation: "guessed"}
+                     %{
+                       item_id: coil.id,
+                       location_id: receiving.id,
+                       quantity: 1,
+                       observation: "measured"
+                     },
+                     %{
+                       item_id: coil.id,
+                       location_id: receiving.id,
+                       quantity: 0,
+                       observation: "guessed"
+                     }
                    ]
                  )
                )
@@ -194,7 +210,12 @@ defmodule Bilimbi.Factory.Inventory.LedgerTest do
                  73,
                  request("R-1",
                    lines: [
-                     %{item_id: coil.id, location_id: receiving.id, quantity: 11, observation: "measured"}
+                     %{
+                       item_id: coil.id,
+                       location_id: receiving.id,
+                       quantity: 11,
+                       observation: "measured"
+                     }
                    ]
                  )
                )
@@ -215,7 +236,14 @@ defmodule Bilimbi.Factory.Inventory.LedgerTest do
                  scope,
                  74,
                  request("R-1",
-                   lines: [%{item_id: item.id, location_id: bay.id, quantity: 10, observation: "measured"}]
+                   lines: [
+                     %{
+                       item_id: item.id,
+                       location_id: bay.id,
+                       quantity: 10,
+                       observation: "measured"
+                     }
+                   ]
                  )
                )
     end
@@ -252,7 +280,9 @@ defmodule Bilimbi.Factory.Inventory.LedgerTest do
           scope,
           73,
           request(request_id,
-            lines: [%{item_id: coil.id, location_id: line.id, quantity: amount, observation: "measured"}]
+            lines: [
+              %{item_id: coil.id, location_id: line.id, quantity: amount, observation: "measured"}
+            ]
           )
         )
       end
@@ -266,6 +296,31 @@ defmodule Bilimbi.Factory.Inventory.LedgerTest do
 
       assert {:error, :insufficient_stock} =
                Inventory.record_transfer(scope, 73, %{transfer | request_id: "T-2"})
+    end
+
+    test "never let a posting's own additions cover its draws", context do
+      %{scope: scope, coil: coil, receiving: receiving, slitter: line} = context
+      _receipt = receive!(context, "R-1", 10)
+
+      move = fn from, to ->
+        %{
+          item_id: coil.id,
+          from_location_id: from.id,
+          to_location_id: to.id,
+          quantity: 5,
+          observation: "declared"
+        }
+      end
+
+      assert {:error, :insufficient_stock} =
+               Inventory.record_transfer(
+                 scope,
+                 73,
+                 request("T-1", lines: [move.(receiving, line), move.(line, receiving)])
+               )
+
+      assert Decimal.eq?(quantity(scope, coil, line), 0)
+      assert Decimal.eq?(quantity(scope, coil, receiving), 10)
     end
 
     test "refuse a transfer to the same location", context do
@@ -306,7 +361,12 @@ defmodule Bilimbi.Factory.Inventory.LedgerTest do
                    corrects_transaction_id: receipt.id,
                    reason: "Scale ticket misread",
                    lines: [
-                     %{item_id: coil.id, location_id: receiving.id, quantity: -2, observation: "measured"}
+                     %{
+                       item_id: coil.id,
+                       location_id: receiving.id,
+                       quantity: -2,
+                       observation: "measured"
+                     }
                    ]
                  )
                )
@@ -365,7 +425,9 @@ defmodule Bilimbi.Factory.Inventory.LedgerTest do
 
       assert {:error, :company_not_found} = Inventory.get_transaction(customer, 73, receipt.id)
       assert {:error, :transaction_not_found} = Inventory.get_transaction(scope, 74, receipt.id)
-      assert {:error, :item_not_found} = Inventory.record_receipt(scope, 74, request("R-2", lines: [line]))
+
+      assert {:error, :item_not_found} =
+               Inventory.record_receipt(scope, 74, request("R-2", lines: [line]))
 
       {:ok, sister_bay} = Inventory.create_location(scope, 74, %{code: "RCV", name: "Receiving"})
 
@@ -379,7 +441,11 @@ defmodule Bilimbi.Factory.Inventory.LedgerTest do
       {:ok, loose} = Inventory.create_item(scope, 73, %{sku: "LOOSE", title: "Loose"})
 
       assert {:error, :material_not_found} =
-               Inventory.record_receipt(scope, 73, request("R-2", lines: [%{line | item_id: loose.id}]))
+               Inventory.record_receipt(
+                 scope,
+                 73,
+                 request("R-2", lines: [%{line | item_id: loose.id}])
+               )
     end
 
     test "lists transactions by item", context do
@@ -391,7 +457,9 @@ defmodule Bilimbi.Factory.Inventory.LedgerTest do
           scope,
           73,
           request("R-2",
-            lines: [%{item_id: sheet.id, location_id: line.id, quantity: 1, observation: "counted"}]
+            lines: [
+              %{item_id: sheet.id, location_id: line.id, quantity: 1, observation: "counted"}
+            ]
           )
         )
 
@@ -406,7 +474,8 @@ defmodule Bilimbi.Factory.Inventory.LedgerTest do
       receipt = receive!(context, "R-1", 10)
 
       for {sql, params} <- [
-            {"UPDATE factory_inventory_transactions SET evidence = 'x' WHERE id = $1", [receipt.id]},
+            {"UPDATE factory_inventory_transactions SET evidence = 'x' WHERE id = $1",
+             [receipt.id]},
             {"DELETE FROM factory_inventory_transaction_entries WHERE transaction_id = $1",
              [receipt.id]},
             {"TRUNCATE factory_inventory_genealogy_links", []}

@@ -4,16 +4,8 @@ defmodule Bilimbi.Factory.Inventory.TestPostingAuthority do
   application, so it sits inside the Factory Domain container the way
   Production Execution does.
 
-  `test_helper.exs` registers it once and keeps its credential, as a real
-  authority keeps its own.
+  Production Execution declares no authority yet, so `test_helper.exs`
+  declares this one in Inventory's application metadata, where a real
+  authority's `mix.exs` puts its own.
   """
-
-  @key {__MODULE__, :credential}
-
-  def register! do
-    {:ok, credential} = Bilimbi.Factory.Inventory.register_posting_authority(__MODULE__)
-    :persistent_term.put(@key, credential)
-  end
-
-  def credential, do: :persistent_term.get(@key)
 end

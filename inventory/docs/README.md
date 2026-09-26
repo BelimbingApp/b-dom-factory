@@ -3,7 +3,7 @@
 Inventory owns Factory's material facts: items, locations, units of measure,
 the Material Transaction ledger, material units, and Lot/Unit Genealogy.
 Warehouse movements post here directly; production effects arrive through the
-production posting authority that Production Execution registers.
+production posting authority that Production Execution declares.
 
 The public contract and its phases are defined in Bilimbi's
 [Inventory module plan](https://github.com/BelimbingApp/bilimbi/blob/main/docs/plans/factory/0010-inventory-module.md).
@@ -31,7 +31,7 @@ company is reported as not found. Results are read models (`Item`, `Unit`,
 | Stock position | `get_stock_position/4` |
 | Ledger postings | `record_receipt/4`, `record_transfer/4`, `record_consumption/4`, `record_output/4`, `record_correction/4`, `record_transform/4` |
 | Ledger reads | `get_transaction/3`, `list_transactions/3` |
-| Posting authority | `register_posting_authority/1`, `posting_authority_registered?/1` |
+| Posting authority | `posting_authority_registered?/1` |
 
 - **Material identity.** An item becomes a stocked material once, with a
   native unit that never changes afterwards. Stock quantities are always held
@@ -79,14 +79,26 @@ Receipts, transfers, and ordinary consumption and corrections are open to
 any caller. Output, transforms, a posting with operation execution, order or
 batch, or Work Centre/Resource context, and a correction of a posting that
 needed an authority are refused as `:unregistered_posting_authority` unless
-they carry `authority:` with a registered credential.
+they carry `authority:` naming a declared posting authority.
 
-`register_posting_authority/1` returns that credential. It refuses a module
-whose OTP application is not a Domain module of Inventory's own container, as
-its descriptor declares, and a module that has already registered, so no
-caller can obtain another module's credential. The registry is in memory, so
-the authority (Production Execution, when it lands) registers at every boot
-and keeps its credential private. Inventory names no registrant.
+The registry is the composition metadata; nothing registers at runtime, and
+Inventory names no authority. A module is declared by its own OTP
+application, beside the descriptor metadata in its `mix.exs` (module
+discovery refuses extra keys in `bilimbi.module.exs`):
+
+```elixir
+env:
+  Bilimbi.Base.ModuleRegistry.MixDiscovery.application_env(__DIR__) ++
+    [posting_authority: Bilimbi.Factory.ProductionExecution]
+```
+
+Inventory accepts a declaration only from a Domain module of its own
+container in the validated graph, naming one of that application's own
+modules, and raises on any other. The BEAM cannot prove which module calls,
+so `test/posting_boundary_test.exs` fails when any compiled module other
+than a declared authority calls `record_output` or `record_transform`.
+Production Execution declares nothing yet; the tests declare
+`TestPostingAuthority`.
 
 ## Persistence
 

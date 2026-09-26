@@ -54,7 +54,8 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
     end
   end
 
-  @spec get(pos_integer(), pos_integer()) :: {:ok, Transaction.t()} | {:error, :transaction_not_found}
+  @spec get(pos_integer(), pos_integer()) ::
+          {:ok, Transaction.t()} | {:error, :transaction_not_found}
   def get(company_id, transaction_id) when is_integer(transaction_id) and transaction_id > 0 do
     case Repo.get_by(Schemas.Transaction, id: transaction_id, company_id: company_id) do
       nil -> {:error, :transaction_not_found}
@@ -114,11 +115,10 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
 
   defp authority(nil), do: {:ok, nil}
 
-  defp authority(credential) do
-    case PostingAuthority.verify(credential) do
-      {:ok, module} -> {:ok, module}
-      :error -> {:error, :unregistered_posting_authority}
-    end
+  defp authority(module) do
+    if PostingAuthority.registered?(module),
+      do: {:ok, module},
+      else: {:error, :unregistered_posting_authority}
   end
 
   defp record(company_id, kind, request, authority) do
@@ -127,7 +127,8 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
          {:ok, materials} <- lock_materials(company_id, request),
          :ok <- fresh(company_id, request),
          {:ok, locations} <- locations(company_id, request),
-         {:ok, plan} <- plan(company_id, kind, request, materials, locations) do
+         {:ok, plan} <- plan(company_id, kind, request, materials, locations),
+         :ok <- stock_suffices(company_id, plan.entries) do
       insert(company_id, kind, request, authority, plan)
     else
       {:replay, transaction_id} -> {:ok, transaction_id}
@@ -172,7 +173,11 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
       |> Repo.all()
 
     unit_ids = Enum.map(locked, & &1.native_unit_id)
-    units = from(unit in Schemas.Unit, where: unit.id in ^unit_ids) |> Repo.all() |> Map.new(&{&1.id, &1})
+
+    units =
+      from(unit in Schemas.Unit, where: unit.id in ^unit_ids)
+      |> Repo.all()
+      |> Map.new(&{&1.id, &1})
 
     materials =
       Map.new(locked, &{&1.item_id, {&1, Map.fetch!(units, &1.native_unit_id)}})
@@ -199,7 +204,8 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
   # request under the same ID is refused.
   defp fresh(company_id, request) do
     from(transaction in Schemas.Transaction,
-      where: transaction.company_id == ^company_id and transaction.request_id == ^request.request_id,
+      where:
+        transaction.company_id == ^company_id and transaction.request_id == ^request.request_id,
       select: {transaction.id, transaction.request_fingerprint}
     )
     |> Repo.one()
@@ -285,6 +291,7 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
       with {:ok, stock} <- stock(company_id, line, materials) do
         stock =
           signed(stock, if(Decimal.negative?(line.quantity), do: -sign, else: sign))
+
         {:ok, [stock, boundary(stock)]}
       end
     end)
@@ -414,7 +421,8 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
     end
   end
 
-  defp total(entries), do: Enum.reduce(entries, Decimal.new(0), &Decimal.add(&1.native_quantity, &2))
+  defp total(entries),
+    do: Enum.reduce(entries, Decimal.new(0), &Decimal.add(&1.native_quantity, &2))
 
   defp map_ok(list, fun) do
     Enum.reduce_while(list, {:ok, []}, fn item, {:ok, acc} ->
@@ -456,11 +464,14 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
       recorded_at: DateTime.utc_now(:microsecond)
     }
 
-    with {:ok, transaction} <- attributes |> Schemas.Transaction.creation_changeset() |> Repo.insert() do
+    with {:ok, transaction} <-
+           attributes |> Schemas.Transaction.creation_changeset() |> Repo.insert() do
       entry_ids =
         Enum.map(plan.entries, fn entry ->
           %Schemas.Entry{}
-          |> Ecto.Changeset.change(Map.merge(entry, %{company_id: company_id, transaction_id: transaction.id}))
+          |> Ecto.Changeset.change(
+            Map.merge(entry, %{company_id: company_id, transaction_id: transaction.id})
+          )
           |> Repo.insert!()
           |> Map.fetch!(:id)
         end)
@@ -475,28 +486,32 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
         })
       end)
 
-      with :ok <- stock_suffices(company_id, plan.entries), do: {:ok, transaction.id}
+      {:ok, transaction.id}
     else
       # A concurrent request under the same ID committed first with other
       # materials, so the material locks did not order the two.
-      {:error, %Ecto.Changeset{}} -> {:error, :request_id_conflict}
+      {:error, changeset} ->
+        case changeset.errors[:request_id] do
+          {_message, [{:constraint, :unique} | _details]} -> {:error, :request_id_conflict}
+          _other -> {:error, changeset}
+        end
     end
   end
 
-  # Every position a posting draws down must stay non-negative. The material
-  # locks taken at the start make this read current.
+  # Every position a posting draws down must hold, before the posting, all it
+  # draws there; the posting's own additions never cover its draws. The
+  # material locks taken at the start make this read current.
   defp stock_suffices(company_id, entries) do
-    drawn =
-      for %{role: "stock", material_id: material_id, location_id: location_id} = entry <- entries,
-          Decimal.negative?(entry.native_quantity),
-          uniq: true,
-          do: {material_id, location_id}
-
-    if Enum.all?(drawn, fn {material_id, location_id} ->
-         not Decimal.negative?(position(company_id, material_id, location_id))
-       end),
-       do: :ok,
-       else: {:error, :insufficient_stock}
+    entries
+    |> Enum.filter(&(&1.role == "stock" and Decimal.negative?(&1.native_quantity)))
+    |> Enum.group_by(&{&1.material_id, &1.location_id}, &Decimal.abs(&1.native_quantity))
+    |> Enum.all?(fn {{material_id, location_id}, drawn} ->
+      Decimal.compare(
+        position(company_id, material_id, location_id),
+        Enum.reduce(drawn, &Decimal.add/2)
+      ) != :lt
+    end)
+    |> if(do: :ok, else: {:error, :insufficient_stock})
   end
 
   # ============================================================================
@@ -527,7 +542,9 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
 
     unit_ids =
       entries
-      |> Enum.flat_map(fn {entry, _item_id, _version} -> [entry.native_unit_id, entry.recorded_unit_id] end)
+      |> Enum.flat_map(fn {entry, _item_id, _version} ->
+        [entry.native_unit_id, entry.recorded_unit_id]
+      end)
       |> Enum.reject(&is_nil/1)
       |> Enum.uniq()
 
@@ -537,9 +554,13 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
       |> Map.new(&{&1.id, Unit.from_schema(&1)})
 
     entries_by_transaction =
-      Enum.group_by(entries, fn {entry, _item_id, _version} -> entry.transaction_id end, fn {entry, item_id, version} ->
-        entry(entry, item_id, version, units)
-      end)
+      Enum.group_by(
+        entries,
+        fn {entry, _item_id, _version} -> entry.transaction_id end,
+        fn {entry, item_id, version} ->
+          entry(entry, item_id, version, units)
+        end
+      )
 
     links =
       from(link in Schemas.GenealogyLink,
@@ -547,7 +568,10 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
         order_by: [asc: link.id]
       )
       |> Repo.all()
-      |> Enum.group_by(& &1.transaction_id, &%{input_entry_id: &1.input_entry_id, output_entry_id: &1.output_entry_id})
+      |> Enum.group_by(
+        & &1.transaction_id,
+        &%{input_entry_id: &1.input_entry_id, output_entry_id: &1.output_entry_id}
+      )
 
     Enum.map(rows, fn row ->
       transaction(row, Map.get(entries_by_transaction, row.id, []), Map.get(links, row.id, []))

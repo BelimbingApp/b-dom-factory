@@ -314,18 +314,10 @@ defmodule Bilimbi.Factory.Inventory do
   # ============================================================================
 
   @doc """
-  Registers `module` as a production posting authority and returns the
-  credential it presents with production or transform postings.
-
-  Only a module installed in Inventory's own Domain container may register,
-  and each module registers once per boot; see
-  `Bilimbi.Factory.Inventory.PostingAuthority`.
+  Whether `module` is a production posting authority, as its OTP application
+  declares in the composition metadata. Only a Domain module of Inventory's
+  own container may declare one; see `Bilimbi.Factory.Inventory.PostingAuthority`.
   """
-  @spec register_posting_authority(module()) ::
-          {:ok, PostingAuthority.t()} | {:error, :outside_domain_container | :already_registered}
-  def register_posting_authority(module) when is_atom(module),
-    do: PostingAuthority.register(module)
-
   @spec posting_authority_registered?(module()) :: boolean()
   def posting_authority_registered?(module) when is_atom(module),
     do: PostingAuthority.registered?(module)
@@ -357,9 +349,10 @@ defmodule Bilimbi.Factory.Inventory do
       version, and the entry names that basis.
 
   A posting that carries `operation_execution`, `order_or_batch`, or
-  `work_centre` context is production context and needs
-  `authority: credential` from `register_posting_authority/1`; without a valid
-  one it is `{:error, :unregistered_posting_authority}`.
+  `work_centre` context is production context and needs `authority: module`
+  naming a declared posting authority (see
+  `posting_authority_registered?/1`); without one it is
+  `{:error, :unregistered_posting_authority}`.
   """
   @spec record_receipt(Scope.t(), pos_integer(), map(), keyword()) :: posting_result()
   def record_receipt(%Scope{} = scope, company_id, request, opts \\ []),
