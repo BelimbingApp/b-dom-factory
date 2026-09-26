@@ -6,39 +6,54 @@ defmodule Bilimbi.Factory.Inventory.Genealogy do
   alias Bilimbi.Factory.Inventory.Identity
   alias Bilimbi.Factory.Inventory.Ledger
   alias Bilimbi.Factory.Inventory.Schemas
+  alias Bilimbi.Factory.Inventory.Transaction
 
-  def get(company_id, identity_id) do
-    case Repo.get_by(Schemas.Identity, id: identity_id, company_id: company_id) do
-      nil -> {:error, :identity_not_found}
-      row -> {:ok, model(row)}
+  @type trace :: %{
+          root: Identity.t(),
+          identities: [Identity.t()],
+          links: [{pos_integer(), pos_integer(), pos_integer()}],
+          receipts: [Transaction.t()]
+        }
+
+  @spec get(pos_integer(), pos_integer()) :: {:ok, Identity.t()} | {:error, :identity_not_found}
+  def get(company_id, identity_id) when is_integer(identity_id) and identity_id > 0 do
+    case identities(company_id, [identity_id]) do
+      [identity] -> {:ok, identity}
+      [] -> {:error, :identity_not_found}
     end
   end
 
+  def get(_company_id, _identity_id), do: {:error, :identity_not_found}
+
+  @spec trace(pos_integer(), pos_integer(), :backward | :forward) ::
+          {:ok, trace()} | {:error, :identity_not_found}
   def trace(company_id, identity_id, direction) when direction in [:backward, :forward] do
     with {:ok, root} <- get(company_id, identity_id) do
       {visited, links} = walk(company_id, direction, MapSet.new([identity_id]), [identity_id], [])
+      identities = identities(company_id, MapSet.to_list(visited))
 
-      identities =
-        from(identity in Schemas.Identity,
-          where: identity.company_id == ^company_id and identity.id in ^MapSet.to_list(visited),
-          order_by: [asc: identity.id]
-        )
-        |> Repo.all()
-        |> Enum.map(&model/1)
+      receipts = Ledger.receipts(company_id, Enum.map(identities, & &1.source_transaction_id))
 
-      receipts =
-        identities
-        |> Enum.map(& &1.source_transaction_id)
-        |> Enum.uniq()
-        |> Enum.flat_map(fn id ->
-          case Ledger.get(company_id, id) do
-            {:ok, %{kind: :receipt} = receipt} -> [receipt]
-            _ -> []
-          end
-        end)
-
-      {:ok, %{root: root, identities: identities, links: Enum.sort(links), receipts: receipts}}
+      {:ok,
+       %{
+         root: root,
+         identities: identities,
+         links: links |> Enum.uniq() |> Enum.sort(),
+         receipts: receipts
+       }}
     end
+  end
+
+  defp identities(company_id, ids) do
+    from(identity in Schemas.Identity,
+      join: material in Schemas.Material,
+      on: material.id == identity.material_id,
+      where: identity.company_id == ^company_id and identity.id in ^ids,
+      order_by: [asc: identity.id],
+      select: {identity, material.item_id}
+    )
+    |> Repo.all()
+    |> Enum.map(&model/1)
   end
 
   defp walk(_company_id, _direction, visited, [], links), do: {visited, links}
@@ -82,9 +97,7 @@ defmodule Bilimbi.Factory.Inventory.Genealogy do
     )
   end
 
-  defp model(row) do
-    item_id = Repo.get!(Schemas.Material, row.material_id).item_id
-
+  defp model({row, item_id}) do
     %Identity{
       id: row.id,
       item_id: item_id,

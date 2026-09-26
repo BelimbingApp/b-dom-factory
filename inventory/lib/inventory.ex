@@ -452,12 +452,16 @@ defmodule Bilimbi.Factory.Inventory do
   end
 
   @doc "Follows transform links from an output toward its source receipts."
+  @spec trace_backward(Scope.t(), pos_integer(), pos_integer()) ::
+          {:ok, Genealogy.trace()} | {:error, :company_not_found | :identity_not_found}
   def trace_backward(%Scope{} = scope, company_id, identity_id) do
     with :ok <- live_company(scope, company_id),
          do: Genealogy.trace(company_id, identity_id, :backward)
   end
 
   @doc "Follows transform links from a receipt toward descendant outputs."
+  @spec trace_forward(Scope.t(), pos_integer(), pos_integer()) ::
+          {:ok, Genealogy.trace()} | {:error, :company_not_found | :identity_not_found}
   def trace_forward(%Scope{} = scope, company_id, identity_id) do
     with :ok <- live_company(scope, company_id),
          do: Genealogy.trace(company_id, identity_id, :forward)

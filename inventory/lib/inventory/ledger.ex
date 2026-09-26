@@ -70,6 +70,19 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
 
   def get(_company_id, _transaction_id), do: {:error, :transaction_not_found}
 
+  @doc "Reads the receipts among the given transaction IDs, in ID order."
+  @spec receipts(pos_integer(), [pos_integer()]) :: [Transaction.t()]
+  def receipts(company_id, transaction_ids) do
+    from(transaction in Schemas.Transaction,
+      where:
+        transaction.company_id == ^company_id and transaction.kind == "receipt" and
+          transaction.id in ^transaction_ids,
+      order_by: [asc: transaction.id]
+    )
+    |> Repo.all()
+    |> then(&read_models(company_id, &1))
+  end
+
   @spec list(pos_integer(), keyword()) :: [Transaction.t()]
   def list(company_id, opts) do
     query =

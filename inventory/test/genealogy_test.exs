@@ -187,5 +187,7 @@ defmodule Bilimbi.Factory.Inventory.GenealogyTest do
 
     assert {:error, :identity_not_found} = Inventory.get_identity(scope, 74, source_id)
     assert {:error, :identity_not_found} = Inventory.trace_forward(scope, 74, source_id)
+    assert {:error, :identity_not_found} = Inventory.get_identity(scope, 73, "#{source_id}")
+    assert {:error, :identity_not_found} = Inventory.trace_backward(scope, 73, "#{source_id}")
   end
 end
