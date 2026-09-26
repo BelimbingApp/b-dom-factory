@@ -138,7 +138,7 @@ These tests hold Inventory's Phase 4 claims:
 | Claim | Test |
 | --- | --- |
 | Catalog, ledger, stock positions, and genealogy serve warehouse work in a runtime without Production Execution | `test/standalone_test.exs` |
-| Inventory does not depend on Production Execution: no descriptor dependency, and no compiled reference to another Factory module | `test/inventory_test.exs`, `test/posting_boundary_test.exs` |
+| Inventory does not depend on Production Execution: no descriptor dependency, and its catalog, ledger, stock, and genealogy run where Production Execution is not loadable | `test/inventory_test.exs`, `test/standalone_test.exs` |
 | With no authority registered, every production and transform posting is refused and warehouse postings continue | `test/posting_authority_test.exs` |
 | An Extension cannot register (its declaration fails Inventory's boot) or post production context | `test/posting_authority_test.exs` |
 | Production Execution is the declared authority, and its postings carry actual inputs and outputs, opaque context, and the execution's evidence atomically | `test/posting_boundary_test.exs` (compiled graph), `production_execution/test/execution_test.exs`, `production_execution/test/workflow_test.exs` |
