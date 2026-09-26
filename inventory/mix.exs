@@ -38,8 +38,8 @@ defmodule Bilimbi.Factory.Inventory.MixProject do
     ]
   end
 
-  # Production Execution declares no posting authority yet, so the tests
-  # declare one the way it will.
+  # Inventory's tests do not load Production Execution, the real authority,
+  # so they declare one the way it does.
   defp posting_authority(:test),
     do: [posting_authority: Bilimbi.Factory.Inventory.TestPostingAuthority]
 

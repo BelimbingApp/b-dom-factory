@@ -100,8 +100,8 @@ env:
 Inventory builds the registry once at application start. It accepts a
 declaration only from a Domain module of its own container in the validated
 graph, naming one of that application's own modules; any other fails boot.
-Production Execution declares nothing yet; Inventory's test build declares
-`TestPostingAuthority`.
+Production Execution is the declared authority. Inventory does not depend on
+it, so Inventory's own test build declares `TestPostingAuthority` instead.
 
 The BEAM cannot prove which module calls, so `test/posting_boundary_test.exs`
 checks the compiled graph: it fails when a module other than a declared
