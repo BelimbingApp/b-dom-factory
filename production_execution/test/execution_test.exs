@@ -243,8 +243,8 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
   defp complete(context, order, attrs, source \\ :live),
     do: ProductionExecution.complete_operation(context.scope, 73, order.id, source, attrs)
 
-  defp signed_in(context, user_id, company_id \\ 73),
-    do: %{context | scope: Authentication.sign_in(context.scope, user_id, company_id)}
+  defp signed_in(context, user_id, company_id \\ 73, opts \\ []),
+    do: %{context | scope: Authentication.sign_in(context.scope, user_id, company_id, opts)}
 
   defp override_decisions do
     %{rows: [[count]]} =
@@ -381,7 +381,6 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
     grant_override!(context, 9)
     context = signed_in(context, 9)
     {order, attrs} = held_order(context)
-    importer = Authz.actor(:user, 9, context.scope, 73)
     historical_at = DateTime.add(attrs.completed_at, -60)
 
     assert {:error, :invalid_hold_override} =
@@ -389,7 +388,6 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
                context,
                order,
                Map.put(attrs, :hold_override, %{
-                 actor: importer,
                  reason: "Batch release",
                  evidence: "Legacy MES override 4411"
                }),
@@ -398,7 +396,6 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
 
     attrs =
       Map.put(attrs, :hold_override, %{
-        actor: importer,
         reason: "Batch release",
         evidence: "Legacy MES override 4411 by QA lead",
         occurred_at: historical_at,
@@ -426,7 +423,6 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
 
     attrs =
       Map.put(attrs, :hold_override, %{
-        actor: Authz.actor(:user, 9, context.scope, 73),
         reason: "Batch release",
         evidence: "Legacy MES override 4412",
         occurred_at: DateTime.add(attrs.completed_at, -60)
@@ -439,6 +435,65 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
 
     assert is_nil(override.actor_type) and is_nil(override.actor_id)
     assert override.recorded_by_id == 9
+  end
+
+  test "an imported override is recorded by the Scope's user, never a named actor", context do
+    authz_tables!()
+    grant_override!(context, 9)
+    {order, attrs} = held_order(context)
+
+    override = %{
+      reason: "Batch release",
+      evidence: "Legacy MES override 4413",
+      occurred_at: DateTime.add(attrs.completed_at, -60),
+      approver: %{type: "user", id: 12}
+    }
+
+    attrs = Map.put(attrs, :hold_override, override)
+
+    named =
+      Map.put(
+        attrs,
+        :hold_override,
+        Map.put(override, :actor, Authz.actor(:user, 9, context.scope, 73))
+      )
+
+    assert {:error, :invalid_hold_override} =
+             complete(signed_in(context, 10), order, named, :import)
+
+    assert {:error, :invalid_hold_override} = complete(context, order, named, :import)
+    assert {:error, :hold_override_denied} = complete(context, order, attrs, :import)
+
+    assert {:error, :hold_override_denied} =
+             complete(signed_in(context, 10), order, attrs, :import)
+
+    assert override_decisions() == 1
+    assert [] = Repo.all(Bilimbi.Factory.ProductionExecution.HoldOverride)
+    assert [] = Repo.all(Bilimbi.Factory.ProductionExecution.Schemas.Execution)
+  end
+
+  test "an impersonated session cannot override a material hold", context do
+    authz_tables!()
+    grant_override!(context, 9)
+    {order, attrs} = held_order(context)
+    context = signed_in(context, 9, 73, impersonator_id: 2, impersonation_session_id: "support")
+    live = Map.put(attrs, :hold_override, %{reason: "urgent"})
+
+    imported =
+      Map.put(attrs, :hold_override, %{
+        reason: "Batch release",
+        evidence: "Legacy MES override 4414",
+        occurred_at: DateTime.add(attrs.completed_at, -60)
+      })
+
+    assert {:error, :override_refused_under_impersonation} = complete(context, order, live)
+
+    assert {:error, :override_refused_under_impersonation} =
+             complete(context, order, imported, :import)
+
+    assert override_decisions() == 0
+    assert [] = Repo.all(Bilimbi.Factory.ProductionExecution.HoldOverride)
+    assert [] = Repo.all(Bilimbi.Factory.ProductionExecution.Schemas.Execution)
   end
 
   test "one override decision is logged per affected unit", context do

@@ -5,9 +5,9 @@ defmodule Bilimbi.Factory.ProductionExecution do
   Live commands and historical imports use `complete_operation/5`. Execution
   and its Inventory material effects commit in one database transaction.
 
-  A live material hold override is authorized against the authenticated user
-  sealed on the Scope. Historical imports retain their source approver and
-  caller-supplied recorder as separate evidence.
+  A material hold override is authorized against the authenticated user sealed
+  on the Scope, who is recorded as its recorder; an impersonated session is
+  refused. Historical imports keep their source approver as separate evidence.
   """
   import Ecto.Query
   alias Bilimbi.Base.Repo
@@ -289,7 +289,7 @@ defmodule Bilimbi.Factory.ProductionExecution do
          {:ok, inputs} <- lines(inputs, operation["inputs"]),
          {:ok, outputs} <- lines(outputs, operation["outputs"]),
          {:ok, holds} <- hold_rules(selected, inputs),
-         {:ok, hold_override, override_actor} <-
+         {:ok, hold_override} <-
            validate_override(scope, company_id, source, completed_at, hold_override),
          true <- inputs != [] or outputs != [],
          true <- is_nil(variance) or (is_map(variance) and inputs != [] and outputs != []) do
@@ -314,10 +314,7 @@ defmodule Bilimbi.Factory.ProductionExecution do
         :crypto.hash(:sha256, :erlang.term_to_binary({order.id, request}, [:deterministic]))
         |> Base.encode16(case: :lower)
 
-      {:ok,
-       request
-       |> Map.put(:request_fingerprint, fingerprint)
-       |> Map.put(:override_actor, override_actor)}
+      {:ok, Map.put(request, :request_fingerprint, fingerprint)}
     else
       {:error, _} = error -> error
       _ -> {:error, :invalid_execution}
@@ -385,10 +382,10 @@ defmodule Bilimbi.Factory.ProductionExecution do
 
   @live_override_keys [:reason, :evidence, :occurred_at] ++
                         ~w(reason evidence occurred_at)
-  @import_override_keys [:actor, :reason, :evidence, :occurred_at, :approver] ++
-                          ~w(actor reason evidence occurred_at approver)
+  @import_override_keys [:reason, :evidence, :occurred_at, :approver] ++
+                          ~w(reason evidence occurred_at approver)
 
-  defp validate_override(_scope, _company_id, _source, _completed_at, nil), do: {:ok, nil, nil}
+  defp validate_override(_scope, _company_id, _source, _completed_at, nil), do: {:ok, nil}
 
   defp validate_override(scope, company_id, source, completed_at, override)
        when is_map(override) do
@@ -400,7 +397,7 @@ defmodule Bilimbi.Factory.ProductionExecution do
 
     with true <- Enum.all?(Map.keys(override), &(&1 in keys)),
          true <- nonblank?(reason),
-         {:ok, actor} <- override_actor(source, scope, company_id, override),
+         {:ok, actor} <- override_actor(scope, company_id),
          {:ok, approver} <- override_approver(source, actor, override),
          true <-
            (source == :live and is_nil(evidence) and is_nil(occurred_at)) or
@@ -417,7 +414,7 @@ defmodule Bilimbi.Factory.ProductionExecution do
          reason: String.trim(reason),
          evidence: evidence && String.trim(evidence),
          occurred_at: occurred_at
-       }, actor}
+       }}
     else
       {:error, _} = error -> error
       _ -> {:error, :invalid_hold_override}
@@ -427,26 +424,19 @@ defmodule Bilimbi.Factory.ProductionExecution do
   defp validate_override(_scope, _company_id, _source, _completed_at, _override),
     do: {:error, :invalid_hold_override}
 
-  defp override_actor(:live, scope, company_id, _override) do
-    case Authz.scope_actor(scope) do
-      {:ok, %Authz.Actor{company_id: ^company_id} = actor} -> {:ok, actor}
-      {:ok, _actor} -> {:error, :hold_override_actor_mismatch}
-      {:error, :no_authenticated_actor} -> {:error, :hold_override_denied}
-    end
-  end
+  defp override_actor(scope, company_id) do
+    case {Scope.actor(scope), Authz.scope_actor(scope)} do
+      {%{impersonator_id: nil}, {:ok, %Authz.Actor{company_id: ^company_id} = actor}} ->
+        {:ok, actor}
 
-  defp override_actor(:import, scope, company_id, override) do
-    actor = value(override, :actor)
-
-    cond do
-      not is_struct(actor, Authz.Actor) ->
-        {:error, :invalid_hold_override}
-
-      Scope.tenant_id(actor.scope) != Scope.tenant_id(scope) or actor.company_id != company_id ->
+      {%{impersonator_id: nil}, {:ok, _actor}} ->
         {:error, :hold_override_actor_mismatch}
 
-      true ->
-        {:ok, actor}
+      {%{impersonator_id: nil}, {:error, :no_authenticated_actor}} ->
+        {:error, :hold_override_denied}
+
+      _impersonated ->
+        {:error, :override_refused_under_impersonation}
     end
   end
 
@@ -545,9 +535,7 @@ defmodule Bilimbi.Factory.ProductionExecution do
     resource = Authz.resource("factory.material_unit", identity_id)
     capability = "factory.production-execution.material-hold.override"
 
-    principal = if request.source == "live", do: scope, else: request.override_actor
-
-    if Authz.can(principal, capability, resource).allowed do
+    if Authz.can(scope, capability, resource).allowed do
       {:ok,
        Map.merge(request.hold_override, %{
          source: request.source,
