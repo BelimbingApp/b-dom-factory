@@ -67,6 +67,103 @@ defmodule Bilimbi.Factory.Inventory.LedgerTest do
       assert Decimal.eq?(quantity(scope, coil, receiving), "120.5")
     end
 
+    test "retain typed weigh-ticket values and expose declared minus measured net", context do
+      %{scope: scope, coil: coil, receiving: receiving, kg: kg} = context
+
+      line = %{
+        item_id: coil.id,
+        location_id: receiving.id,
+        quantity: 70,
+        unit_id: kg.id,
+        observation: "measured"
+      }
+
+      assert {:ok, %Transaction{receipt_measurement: measurement, entries: [stock, _]}} =
+               Inventory.record_receipt(
+                 scope,
+                 73,
+                 request("R-WEIGHED",
+                   receipt_measurement: %{
+                     supplier_declared: 72,
+                     measured_gross: 812,
+                     tare: 742,
+                     net: 70,
+                     unit_id: kg.id,
+                     weighing_point_ref: "RCV"
+                   },
+                   lines: [line]
+                 )
+               )
+
+      assert measurement.unit_id == kg.id
+      assert measurement.weighing_point_ref == "RCV"
+      assert Decimal.eq?(measurement.supplier_variance, 2)
+      assert Decimal.eq?(stock.recorded_quantity, 70)
+      assert Decimal.eq?(quantity(scope, coil, receiving), 70)
+    end
+
+    test "reject weigh-ticket net that differs from the measured stock line", context do
+      %{scope: scope, coil: coil, receiving: receiving, kg: kg} = context
+
+      line = %{
+        item_id: coil.id,
+        location_id: receiving.id,
+        quantity: 69,
+        unit_id: kg.id,
+        observation: "measured"
+      }
+
+      assert {:error, changeset} =
+               Inventory.record_receipt(
+                 scope,
+                 73,
+                 request("R-WEIGHED-BAD",
+                   receipt_measurement: %{
+                     supplier_declared: 72,
+                     measured_gross: 812,
+                     tare: 742,
+                     net: 70,
+                     unit_id: kg.id,
+                     weighing_point_ref: "RCV"
+                   },
+                   lines: [line]
+                 )
+               )
+
+      assert %{receipt_measurement: [_]} = errors_on(changeset)
+    end
+
+    test "reject weigh tickets whose gross less tare does not equal net", context do
+      %{scope: scope, coil: coil, receiving: receiving, kg: kg} = context
+
+      assert {:error, changeset} =
+               Inventory.record_receipt(
+                 scope,
+                 73,
+                 request("R-WEIGHED-ARITHMETIC",
+                   receipt_measurement: %{
+                     supplier_declared: 72,
+                     measured_gross: 812,
+                     tare: 742,
+                     net: 71,
+                     unit_id: kg.id,
+                     weighing_point_ref: "RCV"
+                   },
+                   lines: [
+                     %{
+                       item_id: coil.id,
+                       location_id: receiving.id,
+                       quantity: 71,
+                       unit_id: kg.id,
+                       observation: "measured"
+                     }
+                   ]
+                 )
+               )
+
+      assert %{receipt_measurement: [_]} = errors_on(changeset)
+    end
+
     test "keep a quantity recorded in another unit and name the conversion basis", context do
       %{scope: scope, coil: coil, coil_unit: coil_unit, receiving: receiving, kg: kg} = context
       {:ok, _v2} = Inventory.define_conversion(scope, 73, coil.id, coil_unit.id, "248")

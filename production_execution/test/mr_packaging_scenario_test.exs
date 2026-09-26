@@ -4,6 +4,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenarioTest do
   use Bilimbi.Base.Database.DataCase, async: false
 
   alias Bilimbi.Factory.{Inventory, ProductDefinition, ProductionExecution}
+  alias Bilimbi.Factory.Inventory.ReceiptMeasurement
   alias Bilimbi.Factory.ProductionExecution.MrPackagingScenario
 
   import Bilimbi.Factory.Inventory.TestFixtures
@@ -27,10 +28,18 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenarioTest do
     # Only the measured net enters stock; the declared 72 kg is not counted twice.
     assert receipt.kind == :receipt and receipt.actor_id == 11
     assert DateTime.compare(receipt.effective_at, times.receipt) == :eq
-    assert receipt.evidence =~ "supplier=SUP-1;vehicle=JQK-1234;ticket=WT-1"
+    assert receipt.evidence =~ "supplier SUP-1; vehicle JQK-1234; weigh ticket WT-1"
+    assert %ReceiptMeasurement{} = measurement = receipt.receipt_measurement
+    assert Decimal.eq?(measurement.supplier_declared, 72)
+    assert Decimal.eq?(measurement.measured_gross, 812)
+    assert Decimal.eq?(measurement.tare, 742)
+    assert Decimal.eq?(measurement.net, 70)
 
-    assert receipt.evidence =~
-             "declared_net_kg=72;measured_gross_kg=812;measured_tare_kg=742;measured_net_kg=70;net_variance_kg=-2"
+    assert measurement.unit_id ==
+             receipt.entries |> hd() |> Map.fetch!(:recorded_unit) |> Map.fetch!(:id)
+
+    assert measurement.weighing_point_ref == "RCV"
+    assert Decimal.eq?(measurement.supplier_variance, 2)
 
     assert Decimal.eq?(stock_quantity(receipt, items["VIRGIN"].id), 70)
 

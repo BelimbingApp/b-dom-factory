@@ -19,7 +19,8 @@ defmodule Bilimbi.Factory.Inventory.Ledger.Request do
     reason: :string,
     corrects_transaction_id: :integer,
     context: :map,
-    variance: :map
+    variance: :map,
+    receipt_measurement: :map
   }
 
   @line_types %{
@@ -40,6 +41,14 @@ defmodule Bilimbi.Factory.Inventory.Ledger.Request do
   @observations ~w(measured declared counted derived)
   @text_limit 10_000
   @reference_limit 255
+  @receipt_measurement_types %{
+    supplier_declared: :decimal,
+    measured_gross: :decimal,
+    tare: :decimal,
+    net: :decimal,
+    unit_id: :integer,
+    weighing_point_ref: :string
+  }
 
   @spec observations() :: [String.t()]
   def observations, do: @observations
@@ -68,6 +77,16 @@ defmodule Bilimbi.Factory.Inventory.Ledger.Request do
         end
       end)
 
+    changeset =
+      case receipt_measurement_line_errors(
+             kind,
+             cast_receipt_measurement(changeset.changes[:receipt_measurement]),
+             lists
+           ) do
+        [] -> changeset
+        errors -> Enum.reduce(errors, changeset, &add_error(&2, :receipt_measurement, &1))
+      end
+
     with {:ok, header} <- apply_action(changeset, :validate) do
       fingerprint = fingerprint(kind, changeset.changes, lists)
 
@@ -75,6 +94,7 @@ defmodule Bilimbi.Factory.Inventory.Ledger.Request do
        header
        |> Map.put_new(:effective_at, now)
        |> Map.update(:context, %{}, &normalize_context/1)
+       |> Map.update(:receipt_measurement, nil, &normalize_receipt_measurement/1)
        |> Map.merge(lists)
        |> Map.put(:fingerprint, fingerprint)}
     end
@@ -90,6 +110,7 @@ defmodule Bilimbi.Factory.Inventory.Ledger.Request do
     |> validate_required([:reason, :corrects_transaction_id])
     |> validate_length(:reason, max: @text_limit)
     |> absent(:variance)
+    |> absent(:receipt_measurement)
   end
 
   defp validate_kind(changeset, :transform) do
@@ -97,6 +118,15 @@ defmodule Bilimbi.Factory.Inventory.Ledger.Request do
     |> absent(:reason)
     |> absent(:corrects_transaction_id)
     |> validate_change(:variance, &variance/2)
+    |> absent(:receipt_measurement)
+  end
+
+  defp validate_kind(changeset, :receipt) do
+    changeset
+    |> absent(:reason)
+    |> absent(:corrects_transaction_id)
+    |> absent(:variance)
+    |> validate_change(:receipt_measurement, &receipt_measurement/2)
   end
 
   defp validate_kind(changeset, _kind) do
@@ -104,6 +134,77 @@ defmodule Bilimbi.Factory.Inventory.Ledger.Request do
     |> absent(:reason)
     |> absent(:corrects_transaction_id)
     |> absent(:variance)
+    |> absent(:receipt_measurement)
+  end
+
+  defp receipt_measurement_line_errors(_kind, nil, _lists), do: []
+  defp receipt_measurement_line_errors(_kind, {:error, _changeset}, _lists), do: []
+
+  defp receipt_measurement_line_errors(:receipt, {:ok, measurement}, %{lines: [line]}) do
+    if line.observation == "measured" and line.unit_id == measurement.unit_id and
+         Decimal.eq?(line.quantity, measurement.net),
+       do: [],
+       else: ["net and unit must match the measured stock line"]
+  end
+
+  defp receipt_measurement_line_errors(:receipt, _measurement, _lists),
+    do: ["requires exactly one measured stock line"]
+
+  defp receipt_measurement_line_errors(_kind, _measurement, _lists), do: []
+
+  defp receipt_measurement(:receipt_measurement, measurement) do
+    changeset = cast_receipt_measurement(measurement)
+
+    case changeset do
+      {:error, changeset} ->
+        traverse_errors(changeset, fn {message, options} ->
+          Enum.reduce(options, message, fn {key, value}, message ->
+            String.replace(message, "%{#{key}}", to_string(value))
+          end)
+        end)
+        |> Enum.flat_map(fn {_field, messages} ->
+          Enum.map(messages, &{:receipt_measurement, &1})
+        end)
+
+      {:ok, fields} ->
+        expected_net = Decimal.sub(fields.measured_gross, fields.tare)
+
+        if Decimal.eq?(expected_net, fields.net),
+          do: [],
+          else: [receipt_measurement: "measured_gross minus tare must equal net"]
+    end
+  end
+
+  defp receipt_measurement(_field, _measurement), do: [receipt_measurement: "must be a map"]
+
+  defp cast_receipt_measurement(nil), do: nil
+
+  defp cast_receipt_measurement(measurement) when is_map(measurement) do
+    changeset =
+      {%{}, @receipt_measurement_types}
+      |> cast(measurement, Map.keys(@receipt_measurement_types))
+      |> validate_required(Map.keys(@receipt_measurement_types))
+      |> validate_number(:supplier_declared, greater_than: 0)
+      |> validate_number(:measured_gross, greater_than: 0)
+      |> validate_number(:tare, greater_than_or_equal_to: 0)
+      |> validate_number(:net, greater_than: 0)
+      |> validate_number(:unit_id, greater_than: 0)
+      |> validate_length(:weighing_point_ref, max: @reference_limit)
+
+    apply_action(changeset, :validate)
+  end
+
+  defp cast_receipt_measurement(_measurement),
+    do: {:error, change({%{}, @receipt_measurement_types})}
+
+  defp normalize_receipt_measurement(nil), do: nil
+
+  defp normalize_receipt_measurement(measurement) do
+    {:ok, fields} = cast_receipt_measurement(measurement)
+
+    Map.new(fields, fn {key, value} ->
+      {key, if(match?(%Decimal{}, value), do: Decimal.to_string(value), else: value)}
+    end)
   end
 
   defp absent(changeset, field) do
@@ -282,6 +383,9 @@ defmodule Bilimbi.Factory.Inventory.Ledger.Request do
 
   # A defaulted effective time is left out, so a retry that omits it matches.
   defp fingerprint(kind, changes, lists) do
+    changes =
+      Map.update(changes, :receipt_measurement, nil, &normalize_receipt_measurement/1)
+
     term = {kind, normalize(changes), normalize(lists)}
 
     :crypto.hash(:sha256, :erlang.term_to_binary(term, [:deterministic]))

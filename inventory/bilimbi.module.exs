@@ -16,7 +16,8 @@
     20_260_926_090_000 => :compatible_baseline,
     20_260_926_090_100 => :bilimbi_only,
     20_260_926_120_000 => :bilimbi_only,
-    20_260_926_140_000 => :bilimbi_only
+    20_260_926_140_000 => :bilimbi_only,
+    20_260_927_120_000 => :bilimbi_only
   },
   web: nil,
   schema_contract: Bilimbi.Factory.Inventory.SchemaContract,

@@ -16,6 +16,7 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
   alias Bilimbi.Factory.Inventory.Entry
   alias Bilimbi.Factory.Inventory.Ledger.Request
   alias Bilimbi.Factory.Inventory.PostingAuthority
+  alias Bilimbi.Factory.Inventory.ReceiptMeasurement
   alias Bilimbi.Factory.Inventory.Schemas
   alias Bilimbi.Factory.Inventory.Transaction
   alias Bilimbi.Factory.Inventory.Unit
@@ -500,6 +501,7 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
       actor_type: request.actor_type,
       actor_id: request.actor_id,
       evidence: request.evidence,
+      receipt_measurement: request[:receipt_measurement],
       reason: request[:reason],
       corrects_transaction_id: request[:corrects_transaction_id],
       posting_authority: authority && inspect(authority),
@@ -770,6 +772,7 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
       actor_type: row.actor_type,
       actor_id: row.actor_id,
       evidence: row.evidence,
+      receipt_measurement: receipt_measurement(row.receipt_measurement),
       reason: row.reason,
       corrects_transaction_id: row.corrects_transaction_id,
       posting_authority: row.posting_authority,
@@ -786,6 +789,24 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
       recorded_at: row.recorded_at,
       entries: entries,
       genealogy: genealogy
+    }
+  end
+
+  defp receipt_measurement(nil), do: nil
+
+  defp receipt_measurement(values) do
+    values = Map.new(values, fn {key, value} -> {to_string(key), value} end)
+    declared = Decimal.new(values["supplier_declared"])
+    net = Decimal.new(values["net"])
+
+    %ReceiptMeasurement{
+      supplier_declared: declared,
+      measured_gross: Decimal.new(values["measured_gross"]),
+      tare: Decimal.new(values["tare"]),
+      net: net,
+      unit_id: values["unit_id"],
+      weighing_point_ref: values["weighing_point_ref"],
+      supplier_variance: Decimal.sub(declared, net)
     }
   end
 

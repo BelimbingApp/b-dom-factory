@@ -59,9 +59,19 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenario do
         request("MRP-LORRY-1",
           actor_id: 11,
           effective_at: times.receipt,
-          evidence:
-            "supplier=SUP-1;vehicle=JQK-1234;ticket=WT-1;declared_net_kg=72;measured_gross_kg=812;measured_tare_kg=742;measured_net_kg=70;net_variance_kg=-2;source=representative scale ticket",
-          lines: [line(items["VIRGIN"], receiving, 70, "measured", "VIRGIN-LOT-1", "lot")]
+          evidence: "delivery note DN-1; supplier SUP-1; vehicle JQK-1234; weigh ticket WT-1",
+          receipt_measurement: %{
+            supplier_declared: 72,
+            measured_gross: 812,
+            tare: 742,
+            net: 70,
+            unit_id: kg.id,
+            weighing_point_ref: "RCV"
+          },
+          lines: [
+            line(items["VIRGIN"], receiving, 70, "measured", "VIRGIN-LOT-1", "lot")
+            |> Map.put(:unit_id, kg.id)
+          ]
         )
       )
 
@@ -71,8 +81,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenario do
         @company,
         request("MRP-RECYCLE-1",
           effective_at: times.receipt,
-          evidence:
-            "supplier=SUP-2;declared_net_kg=30;measured_net_kg=30;source=representative scale ticket",
+          evidence: "delivery note DN-2; supplier SUP-2",
           lines: [line(items["RECYCLED"], receiving, 30, "measured", "RECYCLE-LOT-1", "lot")]
         )
       )
