@@ -78,3 +78,7 @@ identities and links; a forward trace also joins the consumptions and
 transforms that drew a visited identity (`Inventory.list_identity_draws/3`),
 so a run without an identified output still appears. Inventory alone stores
 material ancestry.
+
+The [representative Mr Packaging scenario](mr-packaging-scenario.md) exercises
+these contracts from receipt to despatch and lists every plant assumption and
+public-contract limit found during that validation.
