@@ -187,7 +187,7 @@ defmodule Bilimbi.Factory.ProductionExecution do
         |> Execution.changeset()
         |> Repo.insert()
         |> case do
-          {:ok, execution} -> Map.take(execution, @execution_fields)
+          {:ok, execution} -> execution |> Repo.reload!() |> Map.take(@execution_fields)
           {:error, reason} -> Repo.rollback(reason)
         end
 
@@ -222,7 +222,7 @@ defmodule Bilimbi.Factory.ProductionExecution do
          {:ok, inputs} <- lines(inputs, operation["inputs"]),
          {:ok, outputs} <- lines(outputs, operation["outputs"]),
          true <- inputs != [] or outputs != [],
-         true <- is_nil(variance) or is_map(variance) do
+         true <- is_nil(variance) or (is_map(variance) and inputs != [] and outputs != []) do
       request = %{
         request_id: request_id,
         source: Atom.to_string(source),

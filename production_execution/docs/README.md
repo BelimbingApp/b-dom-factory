@@ -6,7 +6,9 @@ Inventory production posting authority in `mix.exs` application metadata.
 
 Create an order with `create_order(scope, company_id, attrs)`. Attributes are
 `code`, `kind` (`"order"` or `"batch"`), `product_id`,
-`formula_version`, `routing_version`, and optional opaque `demand_ref`.
+`formula_version`, `routing_version`, and optional opaque `demand_ref`
+(the demand-source reference Bilimbi's
+`docs/plans/factory/0000-factory-domain.md` line 89 allows on an order).
 The exact pair of revisions is validated through Product Definition and
 retained on the order and every execution.
 
@@ -28,6 +30,7 @@ both live commands (`source: :live`) and historical imports
   the selected operation. Inventory validates stock, units, and conversions.
 - `variance`: optional Inventory transform evidence with `evidence` and
   `reconciliation_basis`; required when actual inputs and outputs differ.
+  Accepted only when the execution has both inputs and outputs.
 
 The facade posts through Inventory's named production functions, carrying
 opaque execution, order/batch, and resource references. Execution and material

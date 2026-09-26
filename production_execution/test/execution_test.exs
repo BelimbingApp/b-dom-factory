@@ -133,7 +133,8 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
     assert {:ok, replay} =
              ProductionExecution.complete_operation(scope, 73, order.id, :live, attrs)
 
-    assert replay.id == completed.id
+    assert replay == completed
+    assert {:ok, ^completed} = ProductionExecution.get_execution(scope, 73, completed.id)
 
     assert {:error, :request_id_conflict} =
              ProductionExecution.complete_operation(scope, 73, order.id, :live, %{
@@ -156,6 +157,23 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
 
     assert transaction.effective_at == attrs.completed_at
     assert DateTime.compare(transaction.recorded_at, attrs.completed_at) == :gt
+  end
+
+  test "variance without both inputs and outputs is refused", context do
+    %{scope: scope, order: order} = context
+
+    attrs =
+      context
+      |> execution("EX-VAR")
+      |> Map.merge(%{
+        inputs: [],
+        variance: %{evidence: "scale drift", reconciliation_basis: "weigh"}
+      })
+
+    assert {:error, :invalid_execution} =
+             ProductionExecution.complete_operation(scope, 73, order.id, :live, attrs)
+
+    assert [] = Repo.all(Bilimbi.Factory.ProductionExecution.Schemas.Execution)
   end
 
   test "posting failure leaves no execution or material effect", context do
