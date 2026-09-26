@@ -82,3 +82,5 @@ material ancestry.
 The [representative Mr Packaging scenario](mr-packaging-scenario.md) exercises
 these contracts from receipt to despatch and lists every plant assumption and
 public-contract limit found during that validation.
+The [representative SBG scenario](sbg-scenario.md) does the same for glue,
+coating, and slitting.
