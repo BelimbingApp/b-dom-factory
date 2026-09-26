@@ -1,5 +1,6 @@
 defmodule Bilimbi.Factory.Inventory.PostingAuthorityTest do
-  # Declarations are application environment, which one test changes.
+  # Declarations are application environment and loaded applications, which
+  # several tests change and restart Inventory over.
   use Bilimbi.Base.Database.DataCase, async: false
 
   alias Bilimbi.Factory.Inventory
@@ -8,6 +9,30 @@ defmodule Bilimbi.Factory.Inventory.PostingAuthorityTest do
   alias Bilimbi.Factory.Inventory.Transaction
 
   import Bilimbi.Factory.Inventory.TestFixtures
+
+  # The throwaway Extension's module, compiled once and kept out of every
+  # application until a test loads its declaring application.
+  setup_all do
+    [{poster, _beam}] =
+      Code.compile_string("""
+      defmodule Bilimbi.Throwaway.Poster do
+        alias Bilimbi.Factory.Inventory
+
+        def consume(scope, request),
+          do: Inventory.record_production_consumption(scope, 73, request, __MODULE__)
+
+        def output(scope, request), do: Inventory.record_output(scope, 73, request, __MODULE__)
+
+        def transform(scope, request),
+          do: Inventory.record_transform(scope, 73, request, __MODULE__)
+
+        def consume_as_warehouse(scope, request),
+          do: Inventory.record_consumption(scope, 73, request)
+      end
+      """)
+
+    %{poster: poster}
+  end
 
   # Inventory's own descriptor and modules stand in for a Factory module's.
   defp declare(descriptor, module) do
@@ -212,5 +237,187 @@ defmodule Bilimbi.Factory.Inventory.PostingAuthorityTest do
       assert {:ok, %Transaction{kind: :correction}} =
                Inventory.record_production_correction(scope, 73, correction, authority)
     end
+  end
+
+  describe "with no authority registered" do
+    setup do
+      context = mill!()
+
+      on_exit(fn ->
+        Application.put_env(
+          :bilimbi_factory_inventory,
+          :posting_authority,
+          TestPostingAuthority
+        )
+
+        restart_inventory!()
+      end)
+
+      Application.delete_env(:bilimbi_factory_inventory, :posting_authority)
+      restart_inventory!()
+      context
+    end
+
+    test "every production and transform posting is refused while warehouse use continues",
+         context do
+      %{scope: scope, coil: coil, sheet: sheet, receiving: receiving, slitter: line} = context
+      refute Inventory.posting_authority_registered?(TestPostingAuthority)
+
+      assert {:ok, %Transaction{kind: :receipt} = receipt} =
+               Inventory.record_receipt(
+                 scope,
+                 73,
+                 request("R-1",
+                   lines: [
+                     %{
+                       item_id: coil.id,
+                       location_id: receiving.id,
+                       quantity: 50,
+                       observation: "measured"
+                     }
+                   ]
+                 )
+               )
+
+      draw = %{item_id: coil.id, location_id: receiving.id, quantity: 5, observation: "measured"}
+      make = %{item_id: sheet.id, location_id: line.id, quantity: 5, observation: "counted"}
+      production = %{order_or_batch: "PO-7"}
+
+      correction =
+        request("X-1",
+          corrects_transaction_id: receipt.id,
+          reason: "Recount",
+          lines: [%{draw | quantity: -1}]
+        )
+
+      for {post, request} <- [
+            {&Inventory.record_production_consumption/4,
+             request("C-1", context: production, lines: [draw])},
+            {&Inventory.record_output/4, request("O-1", lines: [make])},
+            {&Inventory.record_transform/4, request("T-1", inputs: [draw], outputs: [make])},
+            {&Inventory.record_production_correction/4, correction}
+          ],
+          authority <- [TestPostingAuthority, Bilimbi.Factory.ProductionExecution, nil] do
+        assert {:error, :unregistered_posting_authority} = post.(scope, 73, request, authority)
+      end
+
+      assert {:error, :unregistered_posting_authority} =
+               Inventory.record_consumption(
+                 scope,
+                 73,
+                 request("C-2", context: production, lines: [draw])
+               )
+
+      assert {:ok, %Transaction{kind: :consumption}} =
+               Inventory.record_consumption(scope, 73, request("C-3", lines: [draw]))
+
+      assert {:ok, %Transaction{kind: :correction}} =
+               Inventory.record_correction(scope, 73, correction)
+
+      assert {:ok, [_correction, _consumption, ^receipt]} =
+               Inventory.list_transactions(scope, 73)
+    end
+  end
+
+  describe "an Extension" do
+    # A throwaway Extension, `throwaway/poster`, whose own module declares
+    # itself a posting authority and posts production context straight to
+    # Inventory instead of through Production Execution.
+    setup %{poster: poster} do
+      own = Application.fetch_env!(:bilimbi_factory_inventory, :bilimbi_module)
+
+      descriptor = %{
+        own
+        | id: "throwaway/poster",
+          layer: :extension,
+          otp_app: :bilimbi_throwaway_poster,
+          namespace: Bilimbi.Throwaway.Poster,
+          dependencies: ["factory/inventory"],
+          graph_module_ids: own.graph_module_ids ++ ["throwaway/poster"]
+      }
+
+      env = [bilimbi_module: descriptor, posting_authority: poster]
+
+      :ok =
+        :application.load(
+          {:application, :bilimbi_throwaway_poster,
+           [
+             description: ~c"Throwaway Extension",
+             vsn: ~c"0.1.0",
+             modules: [poster],
+             registered: [],
+             applications: [:kernel, :stdlib, :bilimbi_factory_inventory],
+             env: env
+           ]}
+        )
+
+      on_exit(fn ->
+        Application.unload(:bilimbi_throwaway_poster)
+        {:ok, _started} = Application.ensure_all_started(:bilimbi_factory_inventory)
+      end)
+
+      Map.put(mill!(), :env, env)
+    end
+
+    test "cannot register: its declaration is refused and fails Inventory's boot", context do
+      %{poster: poster, env: env} = context
+
+      assert_raise ArgumentError, ~r/bilimbi_throwaway_poster declares/, fn ->
+        PostingAuthority.declared!(:bilimbi_throwaway_poster, env, [poster])
+      end
+
+      :ok = Application.stop(:bilimbi_factory_inventory)
+      assert {:error, reason} = Application.start(:bilimbi_factory_inventory)
+      assert inspect(reason) =~ "bilimbi_throwaway_poster declares"
+    end
+
+    test "cannot post production or transform context", context do
+      %{scope: scope, poster: poster, coil: coil, sheet: sheet} = context
+      %{receiving: receiving, slitter: line} = context
+
+      {:ok, _receipt} =
+        Inventory.record_receipt(
+          scope,
+          73,
+          request("R-1",
+            lines: [
+              %{
+                item_id: coil.id,
+                location_id: receiving.id,
+                quantity: 50,
+                observation: "measured"
+              }
+            ]
+          )
+        )
+
+      refute Inventory.posting_authority_registered?(poster)
+
+      draw = %{item_id: coil.id, location_id: receiving.id, quantity: 5, observation: "measured"}
+      make = %{item_id: sheet.id, location_id: line.id, quantity: 5, observation: "counted"}
+      production = %{operation_execution: "EXT-RUN-1", work_centre: "SLIT-1"}
+
+      assert {:error, :unregistered_posting_authority} =
+               poster.consume(scope, request("C-1", context: production, lines: [draw]))
+
+      assert {:error, :unregistered_posting_authority} =
+               poster.output(scope, request("O-1", context: production, lines: [make]))
+
+      assert {:error, :unregistered_posting_authority} =
+               poster.transform(scope, request("T-1", inputs: [draw], outputs: [make]))
+
+      assert {:error, :unregistered_posting_authority} =
+               poster.consume_as_warehouse(
+                 scope,
+                 request("C-2", context: production, lines: [draw])
+               )
+
+      assert {:ok, [_receipt]} = Inventory.list_transactions(scope, 73)
+    end
+  end
+
+  defp restart_inventory! do
+    :ok = Application.stop(:bilimbi_factory_inventory)
+    :ok = Application.start(:bilimbi_factory_inventory)
   end
 end

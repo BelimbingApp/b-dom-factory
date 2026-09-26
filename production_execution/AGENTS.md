@@ -7,8 +7,10 @@
 - Keep the posting authority declaration in this module's `mix.exs`
   application metadata, not in `bilimbi.module.exs`; module discovery accepts
   only descriptor keys. See `inventory/lib/inventory/posting_authority.ex`.
-- Module-local tests use temporary tables in `test/execution_test.exs`.
-  Mirror migration constraints there when persistence changes.
+- Module-local tests build temporary tables with
+  `test/support/test_fixtures.ex`'s `create_production_tables!/0` after
+  Inventory's `mill!/0`; mirror migration constraints there when persistence
+  changes, rather than creating tables in a test file.
 - Use Inventory's public `trace_backward/3`, `trace_forward/3`, and
   `list_identity_draws/3` for material ancestry and use, then join execution
   context by transaction ID as `lib/production_execution/trace.ex` does;

@@ -35,7 +35,25 @@ defmodule Bilimbi.Factory.Inventory.PostingBoundaryTest do
           module <- modules,
           do: beam!(app, module)
 
+    assert Bilimbi.Factory.ProductionExecution in authorities
     assert violations(beams, authorities, internal()) == []
+  end
+
+  # Inventory's own beams name no module of another Factory package, by call,
+  # capture, struct, or alias, so it compiles, boots, and runs without them.
+  test "Inventory references no other Factory module" do
+    {_app, _env, modules} = compiled!(:bilimbi_factory_inventory)
+
+    foreign =
+      for module <- modules,
+          {_module, atoms} = atoms!(beam!(:bilimbi_factory_inventory, module)),
+          atom <- atoms,
+          factory_module?(atom) and not inventory_module?(atom),
+          uniq: true,
+          do: {module, atom}
+
+    assert modules != []
+    assert foreign == []
   end
 
   test "catches a production posting from an undeclared module and any internal reference" do
@@ -127,6 +145,26 @@ defmodule Bilimbi.Factory.Inventory.PostingBoundaryTest do
       _no_debug_info -> flunk("a compiled module carries no debug info to check")
     end
   end
+
+  defp atoms!(beam) do
+    case :beam_lib.chunks(beam, [:abstract_code]) do
+      {:ok, {module, [abstract_code: {:raw_abstract_v1, forms}]}} -> {module, atoms(forms, [])}
+      _no_debug_info -> flunk("a compiled module carries no debug info to check")
+    end
+  end
+
+  defp atoms({:atom, _anno, atom}, acc), do: [atom | acc]
+  defp atoms(term, acc) when is_tuple(term), do: atoms(Tuple.to_list(term), acc)
+  defp atoms(terms, acc) when is_list(terms), do: Enum.reduce(terms, acc, &atoms/2)
+  defp atoms(_term, acc), do: acc
+
+  defp factory_module?(atom),
+    do: String.starts_with?(Atom.to_string(atom), "Elixir.Bilimbi.Factory.")
+
+  defp inventory_module?(atom),
+    do:
+      atom == Inventory or
+        String.starts_with?(Atom.to_string(atom), "Elixir.Bilimbi.Factory.Inventory.")
 
   defp remote({:remote, _anno, {:atom, _, module}, {:atom, _, function}}, acc),
     do: [{module, function} | acc]

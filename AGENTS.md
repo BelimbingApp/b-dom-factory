@@ -42,6 +42,11 @@ and phases are Bilimbi's `docs/plans/factory/0000-factory-domain.md` and
   `trace_forward/3` read the existing transform links. See
   `inventory/docs/README.md` and `inventory/lib/inventory/genealogy.ex`;
   do not build a second ancestry store.
+- A new factory workflow shape is proved as a fixture in
+  `production_execution/test/workflow_test.exs`, which reconciles it from
+  Inventory transactions; never add a process rule or source mapping to
+  Inventory. Inventory's boundary claims and their tests are listed in
+  `inventory/docs/README.md` (Integration proof).
 - `ModuleRegistry.installed_modules!/0` raises in a module-folder `mix test`,
   which loads only part of the graph. Read one application's descriptor with
   `Application.get_env(app, :bilimbi_module)`, as
