@@ -138,6 +138,11 @@ jobs:
         working-directory: bilimbi/apps/domains/factory/inventory
         run: mix test --only compiled_graph
 
+      # A module-folder test lacks Base Audit; this runs with the composed
+      # host applications and proves an Inventory Repo write is captured.
+      - name: Verify Factory audit capture in the composed host
+        run: mix run apps/domains/factory/.github/scripts/audit_capture_host_test.exs
+
       - name: Enforce greppable AGENTS.md mandates
         run: .github/scripts/mandates.sh
 
