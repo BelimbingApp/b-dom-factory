@@ -37,6 +37,9 @@ and phases are Bilimbi's `docs/plans/factory/0000-factory-domain.md` and
   `test/support/test_fixtures.ex`, not its migrations (Core Compatibility runs
   those). Mirror a new migration's constraints and triggers there, or a test
   that makes PostgreSQL refuse proves nothing.
+- Module-local test helpers disable write capture because Base Audit is absent;
+  `.github/scripts/audit_capture_host_test.exs` proves Factory capture in the
+  composed host. Keep production capture configured in Bilimbi.
 - Lot and unit postings use `identity` on a receipt or output line and
   `identity_id` on later draws; Inventory's `trace_backward/3` and
   `trace_forward/3` read the existing transform links. See

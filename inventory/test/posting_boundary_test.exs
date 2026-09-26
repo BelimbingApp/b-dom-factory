@@ -33,7 +33,7 @@ defmodule Bilimbi.Factory.Inventory.PostingBoundaryTest do
       for {app, _env, modules} <- applications,
           app != :bilimbi_factory_inventory,
           module <- modules,
-          do: beam!(app, module)
+          do: beam(app, module)
 
     assert Bilimbi.Factory.ProductionExecution in authorities
     assert violations(beams, authorities, internal()) == []
@@ -83,7 +83,10 @@ defmodule Bilimbi.Factory.Inventory.PostingBoundaryTest do
   end
 
   # An application of the discovered graph, as its compiled resource lists it,
-  # so a stale beam of a removed module is never read.
+  # so a stale beam of a removed module is never read. Mix prunes a module
+  # folder's test-support beams when a sibling recompiles it as a dependency,
+  # but keeps the .app when that falls in the second the .app was written, so
+  # a listed module without a beam was pruned, not left uncompiled.
   defp compiled!(app) do
     app_file = Path.join(ebin(app), "#{app}.app")
 
@@ -92,14 +95,16 @@ defmodule Bilimbi.Factory.Inventory.PostingBoundaryTest do
     end
 
     {:ok, [{:application, ^app, properties}]} = :file.consult(app_file)
-    {app, Keyword.get(properties, :env, []), Keyword.fetch!(properties, :modules)}
+
+    modules =
+      for module <- Keyword.fetch!(properties, :modules),
+          File.regular?(beam(app, module)),
+          do: module
+
+    {app, Keyword.get(properties, :env, []), modules}
   end
 
-  defp beam!(app, module) do
-    path = Path.join(ebin(app), "#{module}.beam")
-    unless File.regular?(path), do: flunk("#{inspect(module)} of #{app} is not compiled")
-    String.to_charlist(path)
-  end
+  defp beam(app, module), do: String.to_charlist(Path.join(ebin(app), "#{module}.beam"))
 
   defp ebin(app), do: Path.join([Mix.Project.build_path(), "lib", "#{app}", "ebin"])
 

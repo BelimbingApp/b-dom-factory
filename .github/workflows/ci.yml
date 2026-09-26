@@ -138,6 +138,15 @@ jobs:
         working-directory: bilimbi/apps/domains/factory/inventory
         run: mix test --only compiled_graph
 
+      # A module-folder test lacks Base Audit; this runs with the composed
+      # host applications and proves an Inventory Repo write is captured.
+      # Starting the host starts Oban, so the test database and its queue
+      # table are prepared first, as apps/web's `mix test` alias does.
+      - name: Verify Factory audit capture in the composed host
+        run: |
+          (cd apps/web && mix ecto.create --quiet -r Bilimbi.Base.Repo && mix ecto.migrate --quiet -r Bilimbi.Base.Repo --migrations-path ../base/queue/priv/repo/migrations)
+          mix run apps/domains/factory/.github/scripts/audit_capture_host_test.exs
+
       - name: Enforce greppable AGENTS.md mandates
         run: .github/scripts/mandates.sh
 
