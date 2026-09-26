@@ -159,6 +159,83 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
     assert DateTime.compare(transaction.recorded_at, attrs.completed_at) == :gt
   end
 
+  test "production trace follows Inventory ancestry backward and forward with run context",
+       context do
+    %{scope: scope, order: order, coil: coil, receiving: location, resource: resource} = context
+
+    assert {:ok, receipt} =
+             Inventory.record_receipt(
+               scope,
+               73,
+               request("TRACE-RECEIPT",
+                 lines: [
+                   %{
+                     item_id: coil.id,
+                     location_id: location.id,
+                     quantity: 100,
+                     observation: "measured",
+                     identity: %{kind: "lot", code: "COIL-TRACE"}
+                   }
+                 ]
+               )
+             )
+
+    source_id = hd(receipt.entries).identity_id
+
+    outputs =
+      for {request_id, output_code} <- [{"TRACE-1", "SHEET-1"}, {"TRACE-2", "SHEET-2"}] do
+        attrs = execution(context, request_id, 50)
+
+        attrs = %{
+          attrs
+          | inputs: [Map.put(hd(attrs.inputs), :identity_id, source_id)],
+            outputs: [Map.put(hd(attrs.outputs), :identity, %{kind: "lot", code: output_code})]
+        }
+
+        assert {:ok, run} =
+                 ProductionExecution.complete_operation(scope, 73, order.id, :live, attrs)
+
+        assert {:ok, transaction} =
+                 Inventory.get_transaction(scope, 73, run.inventory_transaction_id)
+
+        {run, List.last(transaction.entries).identity_id}
+      end
+
+    [{first_run, first_output_id}, {second_run, second_output_id}] = outputs
+    assert first_output_id != second_output_id
+
+    assert {:ok, backward} = ProductionExecution.trace_backward(scope, 73, first_output_id)
+    assert Enum.map(backward.material.receipts, & &1.id) == [receipt.id]
+    assert Enum.map(backward.material.identities, & &1.id) == [source_id, first_output_id]
+
+    assert backward.material.links == [
+             {source_id, first_output_id, first_run.inventory_transaction_id}
+           ]
+
+    assert [run] = backward.runs
+    assert run.id == first_run.id
+    assert run.order.code == order.code
+    assert run.operation_code == "SLIT"
+    assert run.resource == resource
+
+    assert {:ok, forward} = ProductionExecution.trace_forward(scope, 73, source_id)
+
+    assert Enum.map(forward.material.identities, & &1.id) ==
+             Enum.sort([source_id, first_output_id, second_output_id])
+
+    assert Enum.sort(forward.material.links) ==
+             Enum.sort([
+               {source_id, first_output_id, first_run.inventory_transaction_id},
+               {source_id, second_output_id, second_run.inventory_transaction_id}
+             ])
+
+    assert Enum.map(forward.runs, & &1.id) == [first_run.id, second_run.id]
+    assert Enum.all?(forward.runs, &(&1.resource == resource))
+
+    assert {:error, :identity_not_found} =
+             ProductionExecution.trace_backward(scope, 74, first_output_id)
+  end
+
   test "variance without both inputs and outputs is refused", context do
     %{scope: scope, order: order} = context
 

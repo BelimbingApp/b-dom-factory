@@ -9,6 +9,9 @@
   only descriptor keys. See `inventory/lib/inventory/posting_authority.ex`.
 - Module-local tests use temporary tables in `test/execution_test.exs`.
   Mirror migration constraints there when persistence changes.
+- Use Inventory's public `trace_backward/3` and `trace_forward/3` for material
+  ancestry, then join execution context by transaction ID as
+  `lib/production_execution/trace.ex` does; never keep another ancestry table.
 
 ## Maintaining this file
 

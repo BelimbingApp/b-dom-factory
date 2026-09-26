@@ -11,6 +11,7 @@ defmodule Bilimbi.Factory.ProductionExecution do
   alias Bilimbi.Core.Company
   alias Bilimbi.Factory.Inventory
   alias Bilimbi.Factory.ProductDefinition
+  alias Bilimbi.Factory.ProductionExecution.Trace
   alias Bilimbi.Factory.ProductionExecution.Schemas.{Execution, Order}
 
   @order_fields [
@@ -131,6 +132,14 @@ defmodule Bilimbi.Factory.ProductionExecution do
     end
   end
 
+  @doc "Adds production order, operation, and resource context to Inventory's backward genealogy."
+  def trace_backward(%Scope{} = scope, company_id, identity_id),
+    do: Trace.read(scope, company_id, identity_id, :backward)
+
+  @doc "Adds production order, operation, and resource context to Inventory's forward genealogy."
+  def trace_forward(%Scope{} = scope, company_id, identity_id),
+    do: Trace.read(scope, company_id, identity_id, :forward)
+
   defp commit(scope, company_id, order, request) do
     context = %{
       operation_execution: request.request_id,
@@ -249,7 +258,7 @@ defmodule Bilimbi.Factory.ProductionExecution do
     end
   end
 
-  @line_keys ~w(item_id location_id quantity unit_id conversion_version observation evidence output_role)a
+  @line_keys ~w(item_id location_id quantity unit_id conversion_version observation evidence output_role identity identity_id)a
   defp lines(lines, allowed) when is_list(lines) do
     if Enum.all?(lines, fn line ->
          is_map(line) and value(line, :item_id) in allowed and
