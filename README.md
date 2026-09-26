@@ -9,12 +9,13 @@ Bilimbi checkout; it does not build on its own.
 | --- | --- | --- |
 | [`inventory/`](inventory/docs/README.md) | `factory/inventory` | material facts, the Material Transaction ledger, Lot/Unit Genealogy |
 | [`product_definition/`](product_definition/docs/README.md) | `factory/product_definition` | what is made and how: BOMs, routings, work centres |
-| [`production_execution/`](production_execution/docs/README.md) | `factory/production_execution` | actual work and its Inventory postings; depends on `factory/inventory` |
+| [`production_execution/`](production_execution/docs/README.md) | `factory/production_execution` | actual work and its Inventory postings; depends on Inventory and Product Definition |
 
 Inventory has its catalog, locations, units, stock positions, Material
 Transaction ledger, and production posting-authority registry; Product
 Definition has Phase 1 product, Formula/BOM and routing revisions;
-Production Execution remains a scaffold. Their scope
+Production Execution Phase 1 records orders, batches, and actual routed work
+with atomic Inventory postings. Their scope
 and phases are in Bilimbi's
 [Factory Domain plan](https://github.com/BelimbingApp/bilimbi/blob/main/docs/plans/factory/0000-factory-domain.md) and
 [Inventory module plan](https://github.com/BelimbingApp/bilimbi/blob/main/docs/plans/factory/0010-inventory-module.md).

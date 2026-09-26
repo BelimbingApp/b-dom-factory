@@ -15,8 +15,17 @@ defmodule Bilimbi.Factory.ProductionExecution.DescriptorTest do
     assert module.layer == :domain
     refute module.required
     assert module.namespace == Bilimbi.Factory.ProductionExecution
-    assert module.dependencies == ["base/module_registry", "factory/inventory"]
-    assert module.migrations == nil
+
+    assert module.dependencies == [
+             "base/database",
+             "base/module_registry",
+             "base/tenancy",
+             "core/company",
+             "factory/inventory",
+             "factory/product_definition"
+           ]
+
+    assert module.migrations == "priv/repo/migrations"
     assert Code.ensure_loaded?(Bilimbi.Factory.ProductionExecution)
   end
 end

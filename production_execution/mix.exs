@@ -29,7 +29,9 @@ defmodule Bilimbi.Factory.ProductionExecution.MixProject do
   def application do
     [
       extra_applications: [:logger],
-      env: Bilimbi.Base.ModuleRegistry.MixDiscovery.application_env(__DIR__)
+      env:
+        Bilimbi.Base.ModuleRegistry.MixDiscovery.application_env(__DIR__) ++
+          [posting_authority: Bilimbi.Factory.ProductionExecution]
     ]
   end
 end
