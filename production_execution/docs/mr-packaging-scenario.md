@@ -21,7 +21,7 @@ Every value below is representative. Line numbers refer to Bilimbi's
 
 | Requirement | Scenario stand-in to confirm |
 | --- | --- |
-| 52–54, 128–130: weighing point, clerk, unit and source | Receiving `RCV`, clerk user 11, kilogram native unit, ticket `WT-1`, supplier `SUP-1`, vehicle `JQK-1234`, declared net 72 kg, scale gross 812 kg, tare 742 kg, measured net 70 kg, difference −2 kg. The ticket values are explicit evidence; the ledger receives only measured net. The second 30 kg recycled receipt and 4 kg film receipt are also illustrative. |
+| 52–54, 128–130: weighing point, clerk, unit and source | Receiving `RCV`, clerk user 11, kilogram unit, ticket `WT-1`, supplier `SUP-1`, vehicle `JQK-1234`, declared net 72 kg, scale gross 812 kg, tare 742 kg, measured net 70 kg. Inventory stores these as typed receipt measurement values; only measured net enters stock. Supplier variance is declared minus measured net (+2 kg). The second 30 kg recycled receipt and 4 kg film receipt are also illustrative. |
 | 55, 70, 137–139: storage and labels | Stage at `EXTRUDER-A`, then `CURE-A`; `ROLL-A` and `ROLL-B` are example unit labels. Physical label material, placement, scan reliability and network coverage remain untested. |
 | 61–64, 147–149: blend, colours, dimensions, extrusion | 70 kg virgin plus 30 kg recycled, blue of a proposed three-colour range, two 48 kg rolls, 4 kg process variance; each roll is described in line evidence as 1200 mm wide, 2 mm thick and 100 m long. Extruder `MRP-EXTRUDE` and its timings are representative. |
 | 71–73, 147, 151: cure and permission | 168 hours, an early attempt at 24 hours, a mature use at 192 hours, and granted user 9 with the illustrative reason “Representative supervised release”. Neither the actual minimum per product nor the actual approver and permission assignment is confirmed. |
@@ -30,14 +30,13 @@ Every value below is representative. Line numbers refer to Bilimbi's
 
 ## Public-contract limits found
 
-- Inventory's receipt records one stock quantity and free-text evidence. It has
-  no typed declared, gross or tare measurements, supplier or vehicle reference,
-  or calculated supplier-variance read model. The scenario keeps all ticket
-  values and their source in evidence, posts measured net once, and calculates
-  the difference as an assumption. A report cannot group or validate those
-  fields reliably through today's public read model (requirements 52–54, 89,
-  111). This is a generic receiving measurement gap to confirm with the plant;
-  no MrPackaging Extension is proposed yet.
+- Inventory's typed receipt measurement closes the generic weigh-ticket gap:
+  supplier-declared, gross, tare, net, shared unit, and weighing point are
+  validated and readable, including declared-minus-net supplier variance.
+  Supplier, vehicle, and ticket identifiers remain source evidence because the
+  current contract does not define typed supplier or transport references.
+  Grouping these fields in a report remains out of scope (requirements 52–54,
+  89, 111).
 - Identity contains code, kind, item and immutable source transaction, while
   dimensions are only line evidence and location is inferred from transaction
   history. There is no public typed per-roll dimensions or current location

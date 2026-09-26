@@ -14,6 +14,7 @@ defmodule Bilimbi.Factory.Inventory.Transaction do
   """
 
   alias Bilimbi.Factory.Inventory.Entry
+  alias Bilimbi.Factory.Inventory.ReceiptMeasurement
 
   @kinds [:receipt, :transfer, :consumption, :output, :correction, :transform]
   @context_keys [:operation_execution, :order_or_batch, :work_centre, :shipment, :destination]
@@ -38,6 +39,7 @@ defmodule Bilimbi.Factory.Inventory.Transaction do
     :actor_type,
     :actor_id,
     :evidence,
+    :receipt_measurement,
     :reason,
     :corrects_transaction_id,
     :posting_authority,
@@ -60,6 +62,7 @@ defmodule Bilimbi.Factory.Inventory.Transaction do
           actor_type: String.t(),
           actor_id: non_neg_integer(),
           evidence: String.t(),
+          receipt_measurement: ReceiptMeasurement.t() | nil,
           reason: String.t() | nil,
           corrects_transaction_id: pos_integer() | nil,
           posting_authority: String.t() | nil,

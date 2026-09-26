@@ -347,6 +347,13 @@ defmodule Bilimbi.Factory.Inventory do
       a different request under the same ID is `{:error, :request_id_conflict}`.
     * `actor_type` and `actor_id` (required) — who recorded it.
     * `evidence` (required) — the source evidence, such as a delivery note.
+    * `receipt_measurement` — optional typed weigh-ticket fields: positive
+      `supplier_declared`, `measured_gross`, and `net`; non-negative `tare`;
+      shared `unit_id`; and `weighing_point_ref`. Gross less tare must equal
+      net, and a weighed receipt must have one measured stock line whose
+      quantity and unit match net and the ticket. The returned
+      `Transaction.receipt_measurement.supplier_variance` is declared net
+      minus measured net.
     * `effective_at` — when the material moved, if earlier than now. Inventory
       records its own `recorded_at` beside it, so a late entry keeps both.
     * `context` — optional opaque references, keyed by

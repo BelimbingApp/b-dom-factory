@@ -105,6 +105,7 @@ defmodule Bilimbi.Factory.Inventory.TestFixtures do
         actor_type varchar(64) NOT NULL,
         actor_id bigint NOT NULL,
         evidence text NOT NULL,
+        receipt_measurement jsonb,
         reason text,
         corrects_transaction_id bigint REFERENCES factory_inventory_transactions (id),
         posting_authority varchar(255),

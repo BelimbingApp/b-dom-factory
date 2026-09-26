@@ -58,6 +58,12 @@ do not account for. The `record_*` docs on the facade define each request.
   never interprets. A stock entry keeps the quantity and unit as recorded,
   how it was obtained (measured, declared, counted, or derived), and the
   conversion ID and version that derived its native quantity.
+- **Weighed receipts.** The optional `receipt_measurement` on a receipt keeps
+  supplier-declared, gross, tare, and net values in one unit, plus a weighing
+  point reference. Gross less tare must equal net, and that net and unit must
+  match the receipt's sole measured stock line. The typed read model exposes
+  supplier variance as declared net minus measured net; the stock ledger
+  receives measured net once.
 - **Retries and competing use.** A repeated `request_id` returns the recorded
   transaction; a different request under it is refused. A posting locks the
   materials it touches before reading positions, and no location may go
