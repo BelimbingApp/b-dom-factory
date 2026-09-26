@@ -20,6 +20,9 @@
   Do not accept a caller-supplied start time. Run the override Authz decision
   before `complete_operation/5` opens its transaction, so a refusal keeps its
   decision log; inside, only insert override evidence with the postings.
+- For live hold overrides, use `Authz.scope_actor/1` and `Authz.can/4` with
+  the Scope; a caller-built `Authz.Actor` can name someone else. Imports retain
+  their explicit recorder and historical approver as described in `docs/README.md`.
 - For a customer receipt-to-despatch acceptance case, keep configuration and
   assumed plant values in a test fixture and its scenario doc, as in
   `test/support/mr_packaging_scenario.ex` and `docs/mr-packaging-scenario.md`;

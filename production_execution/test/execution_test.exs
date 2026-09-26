@@ -4,6 +4,7 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
   alias Bilimbi.Base.Authz
   alias Bilimbi.Base.Authz.ContributionValidator
   alias Bilimbi.Base.ModuleRegistry.ContributionRegistry
+  alias Bilimbi.Base.Tenancy.Authentication
   alias Bilimbi.Factory.{Inventory, ProductDefinition, ProductionExecution}
   alias Ecto.Adapters.SQL
   import Bilimbi.Factory.Inventory.TestFixtures
@@ -242,6 +243,9 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
   defp complete(context, order, attrs, source \\ :live),
     do: ProductionExecution.complete_operation(context.scope, 73, order.id, source, attrs)
 
+  defp signed_in(context, user_id, company_id \\ 73),
+    do: %{context | scope: Authentication.sign_in(context.scope, user_id, company_id)}
+
   defp override_decisions do
     %{rows: [[count]]} =
       SQL.query!(
@@ -256,20 +260,20 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
   test "hold override requires a reason and the declared capability", context do
     authz_tables!()
     {order, attrs} = held_order(context)
-    actor = Authz.actor(:user, 10, context.scope, 73)
+    context = signed_in(context, 10)
 
     assert {:error, :invalid_hold_override} =
              complete(
                context,
                order,
-               Map.put(attrs, :hold_override, %{actor: actor, reason: " "})
+               Map.put(attrs, :hold_override, %{reason: " "})
              )
 
     assert {:error, :hold_override_denied} =
              complete(
                context,
                order,
-               Map.put(attrs, :hold_override, %{actor: actor, reason: "urgent"})
+               Map.put(attrs, :hold_override, %{reason: "urgent"})
              )
 
     assert override_decisions() == 1
@@ -278,7 +282,8 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
     assert {:ok, [_receipt]} = Inventory.list_transactions(context.scope, 73)
   end
 
-  test "an override requires an Authz actor in the execution's company", context do
+  test "a live override refuses system scopes, foreign company users, and asserted approvers",
+       context do
     authz_tables!()
     grant_override!(context, 9)
     {order, attrs} = held_order(context)
@@ -296,16 +301,27 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
              complete(
                context,
                order,
-               Map.put(attrs, :hold_override, %{actor: actor, actor_id: 9, reason: "urgent"})
+               Map.put(attrs, :hold_override, %{actor: actor, reason: "urgent"})
              )
 
-    other_company = Authz.actor(:user, 9, context.scope, 74)
-
-    assert {:error, :hold_override_actor_mismatch} =
+    assert {:error, :invalid_hold_override} =
              complete(
                context,
                order,
-               Map.put(attrs, :hold_override, %{actor: other_company, reason: "urgent"})
+               Map.put(attrs, :hold_override, %{
+                 approver: %{type: "user", id: 9},
+                 reason: "urgent"
+               })
+             )
+
+    assert {:error, :hold_override_denied} =
+             complete(context, order, Map.put(attrs, :hold_override, %{reason: "urgent"}))
+
+    assert {:error, :hold_override_actor_mismatch} =
+             complete(
+               signed_in(context, 9, 74),
+               order,
+               Map.put(attrs, :hold_override, %{reason: "urgent"})
              )
 
     assert override_decisions() == 0
@@ -316,9 +332,9 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
   test "authorized override records the affected source atomically with consumption", context do
     authz_tables!()
     grant_override!(context, 9)
+    context = signed_in(context, 9)
     {order, attrs} = held_order(context)
-    actor = Authz.actor(:user, 9, context.scope, 73)
-    attrs = Map.put(attrs, :hold_override, %{actor: actor, reason: "Batch release"})
+    attrs = Map.put(attrs, :hold_override, %{reason: "Batch release"})
 
     assert {:ok, completed} = complete(context, order, attrs)
 
@@ -340,6 +356,16 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
     assert {:ok, ^completed} = complete(context, order, attrs)
     assert override_decisions() == 1
 
+    assert {:error, :invalid_hold_override} =
+             complete(
+               context,
+               order,
+               Map.put(attrs, :hold_override, %{
+                 actor: Authz.actor(:user, 10, context.scope, 73),
+                 reason: "Batch release"
+               })
+             )
+
     assert_raise Postgrex.Error, fn ->
       SQL.query!(
         Repo,
@@ -353,6 +379,7 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
        context do
     authz_tables!()
     grant_override!(context, 9)
+    context = signed_in(context, 9)
     {order, attrs} = held_order(context)
     importer = Authz.actor(:user, 9, context.scope, 73)
     historical_at = DateTime.add(attrs.completed_at, -60)
@@ -394,6 +421,7 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
   test "an imported override without a named approver records none", context do
     authz_tables!()
     grant_override!(context, 9)
+    context = signed_in(context, 9)
     {order, attrs} = held_order(context)
 
     attrs =
@@ -416,6 +444,7 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
   test "one override decision is logged per affected unit", context do
     authz_tables!()
     grant_override!(context, 9)
+    context = signed_in(context, 9)
     {order, attrs} = held_order(context)
     [input] = attrs.inputs
     half = %{input | quantity: 50}
@@ -424,7 +453,6 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
       attrs
       |> Map.put(:inputs, [half, half])
       |> Map.put(:hold_override, %{
-        actor: Authz.actor(:user, 9, context.scope, 73),
         reason: "Batch release"
       })
 
@@ -441,10 +469,10 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
     {order, attrs} = held_order(context)
 
     grant_override!(context, 9)
+    context = signed_in(context, 9)
 
     attrs =
       Map.put(attrs, :hold_override, %{
-        actor: Authz.actor(:user, 9, context.scope, 73),
         reason: "Batch release"
       })
 
@@ -467,10 +495,10 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
     {order, attrs} = held_order(context)
 
     grant_override!(context, 9)
+    context = signed_in(context, 9)
 
     attrs =
       Map.put(attrs, :hold_override, %{
-        actor: Authz.actor(:user, 9, context.scope, 73),
         reason: "Batch release"
       })
 
