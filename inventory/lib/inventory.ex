@@ -1,7 +1,8 @@
 defmodule Bilimbi.Factory.Inventory do
   @moduledoc """
   Factory Inventory's public API: the item master, units of measure, stock
-  locations, material identity, item-level unit conversions, and stock
+  locations, material identity, item-level unit conversions, the Material
+  Transaction ledger, the production posting-authority registry, and stock
   positions.
 
   Every operation takes a `Bilimbi.Base.Tenancy.Scope` and a company ID. The
@@ -10,8 +11,8 @@ defmodule Bilimbi.Factory.Inventory do
   belongs to another company is reported as not found. Results are read models,
   never Ecto schemas.
 
-  Stock positions are views over the Material Transaction ledger. The ledger is
-  not built yet, so every position currently reads zero.
+  Stock positions are views over the Material Transaction ledger, which is
+  append-only: a mistake is corrected by a new transaction that names it.
   """
 
   import Ecto.Query
@@ -21,10 +22,13 @@ defmodule Bilimbi.Factory.Inventory do
   alias Bilimbi.Core.Company
   alias Bilimbi.Factory.Inventory.Conversion
   alias Bilimbi.Factory.Inventory.Item
+  alias Bilimbi.Factory.Inventory.Ledger
   alias Bilimbi.Factory.Inventory.Location
   alias Bilimbi.Factory.Inventory.Material
+  alias Bilimbi.Factory.Inventory.PostingAuthority
   alias Bilimbi.Factory.Inventory.Schemas
   alias Bilimbi.Factory.Inventory.StockPosition
+  alias Bilimbi.Factory.Inventory.Transaction
   alias Bilimbi.Factory.Inventory.Unit
 
   @default_limit 100
@@ -37,6 +41,9 @@ defmodule Bilimbi.Factory.Inventory do
           | :location_not_found
           | :material_not_found
           | :conversion_not_found
+
+  @type posting_result ::
+          {:ok, Transaction.t()} | {:error, :company_not_found | Ledger.error()}
 
   # ============================================================================
   # Item master
@@ -303,14 +310,146 @@ defmodule Bilimbi.Factory.Inventory do
   end
 
   # ============================================================================
+  # Posting authority
+  # ============================================================================
+
+  @doc """
+  Registers `module` as a production posting authority and returns the
+  credential it presents with production or transform postings.
+
+  Only a module installed in Inventory's own Domain container may register,
+  and each module registers once per boot; see
+  `Bilimbi.Factory.Inventory.PostingAuthority`.
+  """
+  @spec register_posting_authority(module()) ::
+          {:ok, PostingAuthority.t()} | {:error, :outside_domain_container | :already_registered}
+  def register_posting_authority(module) when is_atom(module),
+    do: PostingAuthority.register(module)
+
+  @spec posting_authority_registered?(module()) :: boolean()
+  def posting_authority_registered?(module) when is_atom(module),
+    do: PostingAuthority.registered?(module)
+
+  # ============================================================================
+  # Material Transaction ledger
+  # ============================================================================
+
+  @doc """
+  Records material received into stock from outside it.
+
+  Every posting takes a request map with:
+
+    * `request_id` (required) — the caller's idempotency key, unique in the
+      company. Repeating a recorded request returns the recorded transaction;
+      a different request under the same ID is `{:error, :request_id_conflict}`.
+    * `actor_type` and `actor_id` (required) — who recorded it.
+    * `evidence` (required) — the source evidence, such as a delivery note.
+    * `effective_at` — when the material moved, if earlier than now. Inventory
+      records its own `recorded_at` beside it, so a late entry keeps both.
+    * `context` — optional opaque references, keyed by
+      `Bilimbi.Factory.Inventory.Transaction.context_keys/0`, stored without
+      interpretation.
+    * `lines` — one or more lines, each with `item_id`, `location_id`,
+      `quantity` (positive), `observation` (`measured`, `declared`, `counted`,
+      or `derived`), and optionally `unit_id`, `conversion_version`, and
+      `evidence`. A quantity in another unit is kept as recorded; its native
+      quantity is derived through the item's current conversion, or the named
+      version, and the entry names that basis.
+
+  A posting that carries `operation_execution`, `order_or_batch`, or
+  `work_centre` context is production context and needs
+  `authority: credential` from `register_posting_authority/1`; without a valid
+  one it is `{:error, :unregistered_posting_authority}`.
+  """
+  @spec record_receipt(Scope.t(), pos_integer(), map(), keyword()) :: posting_result()
+  def record_receipt(%Scope{} = scope, company_id, request, opts \\ []),
+    do: post(scope, company_id, :receipt, request, opts)
+
+  @doc """
+  Moves material between locations. Each line has `from_location_id` and
+  `to_location_id` instead of `location_id`; the source must hold the quantity.
+  """
+  @spec record_transfer(Scope.t(), pos_integer(), map(), keyword()) :: posting_result()
+  def record_transfer(%Scope{} = scope, company_id, request, opts \\ []),
+    do: post(scope, company_id, :transfer, request, opts)
+
+  @doc """
+  Records material used from stock. The location must hold the quantity, so
+  two callers cannot consume the same material. Consumption against a
+  production order is production context and needs a posting authority.
+  """
+  @spec record_consumption(Scope.t(), pos_integer(), map(), keyword()) :: posting_result()
+  def record_consumption(%Scope{} = scope, company_id, request, opts \\ []),
+    do: post(scope, company_id, :consumption, request, opts)
+
+  @doc "Records production output into stock. Always needs a posting authority."
+  @spec record_output(Scope.t(), pos_integer(), map(), keyword()) :: posting_result()
+  def record_output(%Scope{} = scope, company_id, request, opts \\ []),
+    do: post(scope, company_id, :output, request, opts)
+
+  @doc """
+  Corrects a recorded transaction with a new one; the original is never
+  changed.
+
+  Needs `corrects_transaction_id` and a `reason`. Each line's `quantity` is a
+  signed adjustment at its location: negative removes stock, positive adds it.
+  Correcting a transaction that needed a posting authority needs one too.
+  """
+  @spec record_correction(Scope.t(), pos_integer(), map(), keyword()) :: posting_result()
+  def record_correction(%Scope{} = scope, company_id, request, opts \\ []),
+    do: post(scope, company_id, :correction, request, opts)
+
+  @doc """
+  Records a material transform: `inputs` drawn from stock and `outputs` put
+  into stock, committed with their genealogy as one transaction. Always needs
+  a posting authority.
+
+  Input and output lines take the receipt line fields; an output may add an
+  opaque `output_role`, such as finished, trim, or waste. Every input and
+  output must share one native unit, the unit the transform balances in.
+
+  Observed quantities are kept as recorded and never adjusted to agree. When
+  inputs and outputs differ, `variance` (`evidence` and
+  `reconciliation_basis`) is required and the difference is recorded as a
+  variance entry; without it the transform is `{:error, :variance_required}`,
+  and a variance with no difference is `{:error, :no_variance}`.
+  """
+  @spec record_transform(Scope.t(), pos_integer(), map(), keyword()) :: posting_result()
+  def record_transform(%Scope{} = scope, company_id, request, opts \\ []),
+    do: post(scope, company_id, :transform, request, opts)
+
+  @spec get_transaction(Scope.t(), pos_integer(), pos_integer()) ::
+          {:ok, Transaction.t()} | {:error, :company_not_found | :transaction_not_found}
+  def get_transaction(%Scope{} = scope, company_id, transaction_id) do
+    with :ok <- live_company(scope, company_id) do
+      Ledger.get(company_id, transaction_id)
+    end
+  end
+
+  @doc """
+  Lists a company's transactions, most recently recorded first.
+
+  Options: `:item_id` keeps transactions with an entry for that item;
+  `:limit` caps the result (default #{@default_limit}, at most
+  #{@maximum_limit}).
+  """
+  @spec list_transactions(Scope.t(), pos_integer(), keyword()) ::
+          {:ok, [Transaction.t()]} | {:error, :company_not_found}
+  def list_transactions(%Scope{} = scope, company_id, opts \\ []) do
+    opts = Keyword.validate!(opts, item_id: nil, limit: @default_limit)
+
+    with :ok <- live_company(scope, company_id) do
+      {:ok, Ledger.list(company_id, item_id: opts[:item_id], limit: limit!(opts[:limit]))}
+    end
+  end
+
+  # ============================================================================
   # Stock positions
   # ============================================================================
 
   @doc """
-  Reads the stock position of one material at one location.
-
-  The quantity is in the item's native unit. Positions are derived from the
-  Material Transaction ledger; until that ledger lands every position is zero.
+  Reads the stock position of one material at one location: the sum of the
+  ledger's stock entries there, in the item's native unit.
   """
   @spec get_stock_position(Scope.t(), pos_integer(), pos_integer(), pos_integer()) ::
           {:ok, StockPosition.t()}
@@ -318,14 +457,13 @@ defmodule Bilimbi.Factory.Inventory do
              :company_not_found | :item_not_found | :material_not_found | :location_not_found}
   def get_stock_position(%Scope{} = scope, company_id, item_id, location_id) do
     with :ok <- live_company(scope, company_id),
-         {:ok, item, _material, native_unit} <- fetch_material(company_id, item_id),
+         {:ok, item, material, native_unit} <- fetch_material(company_id, item_id),
          {:ok, location} <- fetch(Schemas.Location, company_id, location_id, :location_not_found) do
       {:ok,
        %StockPosition{
          item_id: item.id,
          location_id: location.id,
-         # No ledger rows exist to sum yet.
-         quantity: Decimal.new(0),
+         quantity: Ledger.position(company_id, material.id, location.id),
          unit: Unit.from_schema(native_unit)
        }}
     end
@@ -334,6 +472,12 @@ defmodule Bilimbi.Factory.Inventory do
   # ============================================================================
   # Private
   # ============================================================================
+
+  defp post(scope, company_id, kind, request, opts) when is_map(request) do
+    with :ok <- live_company(scope, company_id) do
+      Ledger.post(company_id, kind, request, opts)
+    end
+  end
 
   defp live_company(scope, company_id) do
     case Company.get_company(scope, company_id) do

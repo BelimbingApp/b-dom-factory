@@ -1,0 +1,612 @@
+defmodule Bilimbi.Factory.Inventory.Ledger do
+  @moduledoc false
+
+  # Posts and reads Material Transactions. The facade has already proven the
+  # company; everything here is scoped to that company ID.
+  #
+  # A posting locks the material rows it touches, in ID order, before it
+  # reads a request ID or a stock position. That one lock serialises retries
+  # of the same request and competing consumption of the same material, so
+  # two callers cannot both take the last of it. The unique request index and
+  # the database's balance and append-only triggers are the backstops.
+
+  import Ecto.Query
+
+  alias Bilimbi.Base.Repo
+  alias Bilimbi.Factory.Inventory.Entry
+  alias Bilimbi.Factory.Inventory.Ledger.Request
+  alias Bilimbi.Factory.Inventory.PostingAuthority
+  alias Bilimbi.Factory.Inventory.Schemas
+  alias Bilimbi.Factory.Inventory.Transaction
+  alias Bilimbi.Factory.Inventory.Unit
+
+  @production_context [:operation_execution, :order_or_batch, :work_centre]
+  @always_production [:output, :transform]
+
+  @type error ::
+          :unregistered_posting_authority
+          | :request_id_conflict
+          | :item_not_found
+          | :material_not_found
+          | :location_not_found
+          | :conversion_not_found
+          | :transaction_not_found
+          | :insufficient_stock
+          | :mixed_native_units
+          | :variance_required
+          | :no_variance
+          | Ecto.Changeset.t()
+
+  @spec post(pos_integer(), Transaction.kind(), map(), keyword()) ::
+          {:ok, Transaction.t()} | {:error, error()}
+  def post(company_id, kind, request, opts) do
+    opts = Keyword.validate!(opts, authority: nil)
+    now = DateTime.utc_now(:microsecond)
+
+    with {:ok, request} <- Request.validate(kind, request, now),
+         {:ok, authority} <- authority(opts[:authority]) do
+      Repo.transaction(fn ->
+        case record(company_id, kind, request, authority) do
+          {:ok, transaction_id} -> read!(company_id, transaction_id)
+          {:error, reason} -> Repo.rollback(reason)
+        end
+      end)
+    end
+  end
+
+  @spec get(pos_integer(), pos_integer()) :: {:ok, Transaction.t()} | {:error, :transaction_not_found}
+  def get(company_id, transaction_id) when is_integer(transaction_id) and transaction_id > 0 do
+    case Repo.get_by(Schemas.Transaction, id: transaction_id, company_id: company_id) do
+      nil -> {:error, :transaction_not_found}
+      row -> {:ok, hd(read_models(company_id, [row]))}
+    end
+  end
+
+  def get(_company_id, _transaction_id), do: {:error, :transaction_not_found}
+
+  @spec list(pos_integer(), keyword()) :: [Transaction.t()]
+  def list(company_id, opts) do
+    query =
+      from(transaction in Schemas.Transaction,
+        where: transaction.company_id == ^company_id,
+        order_by: [desc: transaction.id],
+        limit: ^opts[:limit]
+      )
+
+    query =
+      case opts[:item_id] do
+        nil ->
+          query
+
+        item_id ->
+          from(transaction in query,
+            where:
+              transaction.id in subquery(
+                from(entry in Schemas.Entry,
+                  join: material in Schemas.Material,
+                  on: material.id == entry.material_id,
+                  where: material.item_id == ^item_id and entry.company_id == ^company_id,
+                  select: entry.transaction_id
+                )
+              )
+          )
+      end
+
+    read_models(company_id, Repo.all(query))
+  end
+
+  @doc "Sums the stock entries of one material at one location."
+  @spec position(pos_integer(), pos_integer(), pos_integer()) :: Decimal.t()
+  def position(company_id, material_id, location_id) do
+    from(entry in Schemas.Entry,
+      where:
+        entry.company_id == ^company_id and entry.role == "stock" and
+          entry.material_id == ^material_id and entry.location_id == ^location_id,
+      select: coalesce(sum(entry.native_quantity), 0)
+    )
+    |> Repo.one()
+    |> Decimal.new()
+  end
+
+  # ============================================================================
+  # Posting
+  # ============================================================================
+
+  defp authority(nil), do: {:ok, nil}
+
+  defp authority(credential) do
+    case PostingAuthority.verify(credential) do
+      {:ok, module} -> {:ok, module}
+      :error -> {:error, :unregistered_posting_authority}
+    end
+  end
+
+  defp record(company_id, kind, request, authority) do
+    with {:ok, original} <- corrected(company_id, kind, request),
+         :ok <- authorised(kind, request, original, authority),
+         {:ok, materials} <- lock_materials(company_id, request),
+         :ok <- fresh(company_id, request),
+         {:ok, locations} <- locations(company_id, request),
+         {:ok, plan} <- plan(company_id, kind, request, materials, locations) do
+      insert(company_id, kind, request, authority, plan)
+    else
+      {:replay, transaction_id} -> {:ok, transaction_id}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp corrected(company_id, :correction, request) do
+    case Repo.get_by(Schemas.Transaction,
+           id: request.corrects_transaction_id,
+           company_id: company_id
+         ) do
+      nil -> {:error, :transaction_not_found}
+      original -> {:ok, original}
+    end
+  end
+
+  defp corrected(_company_id, _kind, _request), do: {:ok, nil}
+
+  # Production or transform context needs a registered authority. Correcting
+  # a posting that needed one needs one too.
+  defp authorised(kind, request, original, authority) do
+    production? =
+      kind in @always_production or
+        Enum.any?(@production_context, &Map.has_key?(request.context, &1)) or
+        (original != nil and original.posting_authority != nil)
+
+    if production? and authority == nil,
+      do: {:error, :unregistered_posting_authority},
+      else: :ok
+  end
+
+  defp lock_materials(company_id, request) do
+    item_ids = request |> lines() |> Enum.map(& &1.item_id) |> Enum.uniq()
+
+    locked =
+      from(material in Schemas.Material,
+        where: material.company_id == ^company_id and material.item_id in ^item_ids,
+        order_by: [asc: material.id],
+        lock: "FOR UPDATE"
+      )
+      |> Repo.all()
+
+    unit_ids = Enum.map(locked, & &1.native_unit_id)
+    units = from(unit in Schemas.Unit, where: unit.id in ^unit_ids) |> Repo.all() |> Map.new(&{&1.id, &1})
+
+    materials =
+      Map.new(locked, &{&1.item_id, {&1, Map.fetch!(units, &1.native_unit_id)}})
+
+    case Enum.reject(item_ids, &Map.has_key?(materials, &1)) do
+      [] ->
+        {:ok, materials}
+
+      missing ->
+        known =
+          from(item in Schemas.Item,
+            where: item.company_id == ^company_id and item.id in ^missing,
+            select: count()
+          )
+          |> Repo.one()
+
+        if known == length(missing),
+          do: {:error, :material_not_found},
+          else: {:error, :item_not_found}
+    end
+  end
+
+  # A retry of a recorded request returns what it recorded; a different
+  # request under the same ID is refused.
+  defp fresh(company_id, request) do
+    from(transaction in Schemas.Transaction,
+      where: transaction.company_id == ^company_id and transaction.request_id == ^request.request_id,
+      select: {transaction.id, transaction.request_fingerprint}
+    )
+    |> Repo.one()
+    |> case do
+      nil ->
+        :ok
+
+      {id, fingerprint} ->
+        if fingerprint == request.fingerprint,
+          do: {:replay, id},
+          else: {:error, :request_id_conflict}
+    end
+  end
+
+  defp locations(company_id, request) do
+    ids =
+      request
+      |> lines()
+      |> Enum.flat_map(&[&1[:location_id], &1[:from_location_id], &1[:to_location_id]])
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
+    found =
+      from(location in Schemas.Location,
+        where: location.company_id == ^company_id and location.id in ^ids,
+        select: location.id
+      )
+      |> Repo.all()
+      |> MapSet.new()
+
+    if Enum.all?(ids, &MapSet.member?(found, &1)),
+      do: {:ok, found},
+      else: {:error, :location_not_found}
+  end
+
+  defp lines(%{inputs: inputs, outputs: outputs}), do: inputs ++ outputs
+  defp lines(%{lines: lines}), do: lines
+
+  # ============================================================================
+  # Entry plans
+  # ============================================================================
+
+  # A plan is the entries to insert, in order, and the genealogy links between
+  # them as {input position, output position}.
+
+  defp plan(company_id, :transfer, request, materials, _locations) do
+    request.lines
+    |> map_ok(fn line ->
+      with {:ok, stock} <- stock(company_id, line, materials) do
+        {:ok,
+         [
+           signed(%{stock | location_id: line.from_location_id}, -1),
+           %{stock | location_id: line.to_location_id}
+         ]}
+      end
+    end)
+    |> entries_plan()
+  end
+
+  defp plan(company_id, :transform, request, materials, _locations) do
+    with {:ok, inputs} <- map_ok(request.inputs, &stock(company_id, &1, materials)),
+         {:ok, outputs} <- map_ok(request.outputs, &stock(company_id, &1, materials)),
+         {:ok, unit_id} <- one_native_unit(inputs ++ outputs),
+         {:ok, variance} <- variance(inputs, outputs, unit_id, Request.variance(request)) do
+      inputs = Enum.map(inputs, &signed(&1, -1))
+      entries = inputs ++ outputs ++ variance
+      input_positions = Enum.to_list(0..(length(inputs) - 1)//1)
+      output_positions = Enum.to_list(length(inputs)..(length(inputs) + length(outputs) - 1)//1)
+
+      {:ok,
+       %{
+         entries: entries,
+         links: for(input <- input_positions, output <- output_positions, do: {input, output})
+       }}
+    end
+  end
+
+  defp plan(company_id, kind, request, materials, _locations) do
+    sign = if kind == :consumption, do: -1, else: 1
+
+    request.lines
+    |> map_ok(fn line ->
+      with {:ok, stock} <- stock(company_id, line, materials) do
+        stock =
+          signed(stock, if(Decimal.negative?(line.quantity), do: -sign, else: sign))
+        {:ok, [stock, boundary(stock)]}
+      end
+    end)
+    |> entries_plan()
+  end
+
+  defp entries_plan({:ok, groups}), do: {:ok, %{entries: List.flatten(groups), links: []}}
+  defp entries_plan(error), do: error
+
+  defp stock(company_id, line, materials) do
+    {material, native_unit} = Map.fetch!(materials, line.item_id)
+    quantity = Decimal.abs(line.quantity)
+
+    with {:ok, native_quantity, recorded_unit_id, conversion_id} <-
+           native(company_id, material, native_unit, line, quantity) do
+      {:ok,
+       %{
+         role: "stock",
+         material_id: material.id,
+         location_id: line[:location_id],
+         native_quantity: native_quantity,
+         native_unit_id: native_unit.id,
+         recorded_quantity: quantity,
+         recorded_unit_id: recorded_unit_id,
+         conversion_id: conversion_id,
+         observation: line.observation,
+         output_role: line[:output_role],
+         evidence: line[:evidence],
+         reconciliation_basis: nil
+       }}
+    end
+  end
+
+  # The recorded quantity is kept as observed; the native quantity is derived
+  # from it through the named conversion version and never replaces it.
+  defp native(company_id, material, native_unit, line, quantity) do
+    case line[:unit_id] do
+      unit_id when unit_id in [nil, native_unit.id] ->
+        {:ok, quantity, native_unit.id, nil}
+
+      unit_id ->
+        query =
+          from(conversion in Schemas.Conversion,
+            where:
+              conversion.company_id == ^company_id and conversion.material_id == ^material.id and
+                conversion.unit_id == ^unit_id,
+            order_by: [desc: conversion.version],
+            limit: 1
+          )
+
+        query =
+          case line[:conversion_version] do
+            nil -> query
+            version -> from(conversion in query, where: conversion.version == ^version)
+          end
+
+        case Repo.one(query) do
+          nil ->
+            {:error, :conversion_not_found}
+
+          conversion ->
+            native_quantity = quantity |> Decimal.mult(conversion.factor) |> Decimal.round(12)
+            {:ok, native_quantity, unit_id, conversion.id}
+        end
+    end
+  end
+
+  defp signed(entry, sign) when sign in [-1, 1] do
+    %{entry | native_quantity: Decimal.mult(entry.native_quantity, sign)}
+  end
+
+  defp boundary(stock) do
+    %{
+      stock
+      | role: "boundary",
+        location_id: nil,
+        native_quantity: Decimal.negate(stock.native_quantity),
+        recorded_quantity: nil,
+        recorded_unit_id: nil,
+        conversion_id: nil,
+        observation: nil,
+        output_role: nil,
+        evidence: nil
+    }
+  end
+
+  # A transform balances in one unit; its observations are compared, never
+  # adjusted.
+  defp one_native_unit(entries) do
+    case entries |> Enum.map(& &1.native_unit_id) |> Enum.uniq() do
+      [unit_id] -> {:ok, unit_id}
+      _units -> {:error, :mixed_native_units}
+    end
+  end
+
+  defp variance(inputs, outputs, unit_id, evidence) do
+    difference = Decimal.sub(total(inputs), total(outputs))
+
+    cond do
+      Decimal.eq?(difference, 0) and evidence == nil ->
+        {:ok, []}
+
+      Decimal.eq?(difference, 0) ->
+        {:error, :no_variance}
+
+      evidence == nil ->
+        {:error, :variance_required}
+
+      true ->
+        {:ok,
+         [
+           %{
+             role: "variance",
+             material_id: nil,
+             location_id: nil,
+             native_quantity: difference,
+             native_unit_id: unit_id,
+             recorded_quantity: nil,
+             recorded_unit_id: nil,
+             conversion_id: nil,
+             observation: nil,
+             output_role: nil,
+             evidence: evidence.evidence,
+             reconciliation_basis: evidence.reconciliation_basis
+           }
+         ]}
+    end
+  end
+
+  defp total(entries), do: Enum.reduce(entries, Decimal.new(0), &Decimal.add(&1.native_quantity, &2))
+
+  defp map_ok(list, fun) do
+    Enum.reduce_while(list, {:ok, []}, fn item, {:ok, acc} ->
+      case fun.(item) do
+        {:ok, value} -> {:cont, {:ok, [value | acc]}}
+        error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, values} -> {:ok, Enum.reverse(values)}
+      error -> error
+    end
+  end
+
+  # ============================================================================
+  # Insert
+  # ============================================================================
+
+  defp insert(company_id, kind, request, authority, plan) do
+    attributes = %{
+      company_id: company_id,
+      kind: Atom.to_string(kind),
+      request_id: request.request_id,
+      request_fingerprint: request.fingerprint,
+      actor_type: request.actor_type,
+      actor_id: request.actor_id,
+      evidence: request.evidence,
+      reason: request[:reason],
+      corrects_transaction_id: request[:corrects_transaction_id],
+      posting_authority: authority && inspect(authority),
+      operation_execution_ref: request.context[:operation_execution],
+      order_or_batch_ref: request.context[:order_or_batch],
+      work_centre_ref: request.context[:work_centre],
+      shipment_ref: request.context[:shipment],
+      destination_ref: request.context[:destination],
+      effective_at: request.effective_at,
+      # Taken after the material locks, so it never precedes the effective
+      # time validated against an earlier clock reading.
+      recorded_at: DateTime.utc_now(:microsecond)
+    }
+
+    with {:ok, transaction} <- attributes |> Schemas.Transaction.creation_changeset() |> Repo.insert() do
+      entry_ids =
+        Enum.map(plan.entries, fn entry ->
+          %Schemas.Entry{}
+          |> Ecto.Changeset.change(Map.merge(entry, %{company_id: company_id, transaction_id: transaction.id}))
+          |> Repo.insert!()
+          |> Map.fetch!(:id)
+        end)
+        |> List.to_tuple()
+
+      Enum.each(plan.links, fn {input, output} ->
+        Repo.insert!(%Schemas.GenealogyLink{
+          company_id: company_id,
+          transaction_id: transaction.id,
+          input_entry_id: elem(entry_ids, input),
+          output_entry_id: elem(entry_ids, output)
+        })
+      end)
+
+      with :ok <- stock_suffices(company_id, plan.entries), do: {:ok, transaction.id}
+    else
+      # A concurrent request under the same ID committed first with other
+      # materials, so the material locks did not order the two.
+      {:error, %Ecto.Changeset{}} -> {:error, :request_id_conflict}
+    end
+  end
+
+  # Every position a posting draws down must stay non-negative. The material
+  # locks taken at the start make this read current.
+  defp stock_suffices(company_id, entries) do
+    drawn =
+      for %{role: "stock", material_id: material_id, location_id: location_id} = entry <- entries,
+          Decimal.negative?(entry.native_quantity),
+          uniq: true,
+          do: {material_id, location_id}
+
+    if Enum.all?(drawn, fn {material_id, location_id} ->
+         not Decimal.negative?(position(company_id, material_id, location_id))
+       end),
+       do: :ok,
+       else: {:error, :insufficient_stock}
+  end
+
+  # ============================================================================
+  # Read models
+  # ============================================================================
+
+  defp read!(company_id, transaction_id) do
+    {:ok, transaction} = get(company_id, transaction_id)
+    transaction
+  end
+
+  defp read_models(_company_id, []), do: []
+
+  defp read_models(company_id, rows) do
+    ids = Enum.map(rows, & &1.id)
+
+    entries =
+      from(entry in Schemas.Entry,
+        left_join: material in Schemas.Material,
+        on: material.id == entry.material_id,
+        left_join: conversion in Schemas.Conversion,
+        on: conversion.id == entry.conversion_id,
+        where: entry.company_id == ^company_id and entry.transaction_id in ^ids,
+        order_by: [asc: entry.id],
+        select: {entry, material.item_id, conversion.version}
+      )
+      |> Repo.all()
+
+    unit_ids =
+      entries
+      |> Enum.flat_map(fn {entry, _item_id, _version} -> [entry.native_unit_id, entry.recorded_unit_id] end)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
+    units =
+      from(unit in Schemas.Unit, where: unit.id in ^unit_ids)
+      |> Repo.all()
+      |> Map.new(&{&1.id, Unit.from_schema(&1)})
+
+    entries_by_transaction =
+      Enum.group_by(entries, fn {entry, _item_id, _version} -> entry.transaction_id end, fn {entry, item_id, version} ->
+        entry(entry, item_id, version, units)
+      end)
+
+    links =
+      from(link in Schemas.GenealogyLink,
+        where: link.company_id == ^company_id and link.transaction_id in ^ids,
+        order_by: [asc: link.id]
+      )
+      |> Repo.all()
+      |> Enum.group_by(& &1.transaction_id, &%{input_entry_id: &1.input_entry_id, output_entry_id: &1.output_entry_id})
+
+    Enum.map(rows, fn row ->
+      transaction(row, Map.get(entries_by_transaction, row.id, []), Map.get(links, row.id, []))
+    end)
+  end
+
+  @kinds Map.new(Transaction.kinds(), &{Atom.to_string(&1), &1})
+  @roles %{"stock" => :stock, "boundary" => :boundary, "variance" => :variance}
+  @observations %{
+    "measured" => :measured,
+    "declared" => :declared,
+    "counted" => :counted,
+    "derived" => :derived
+  }
+
+  defp transaction(row, entries, genealogy) do
+    %Transaction{
+      id: row.id,
+      company_id: row.company_id,
+      kind: Map.fetch!(@kinds, row.kind),
+      request_id: row.request_id,
+      actor_type: row.actor_type,
+      actor_id: row.actor_id,
+      evidence: row.evidence,
+      reason: row.reason,
+      corrects_transaction_id: row.corrects_transaction_id,
+      posting_authority: row.posting_authority,
+      context:
+        %{
+          operation_execution: row.operation_execution_ref,
+          order_or_batch: row.order_or_batch_ref,
+          work_centre: row.work_centre_ref,
+          shipment: row.shipment_ref,
+          destination: row.destination_ref
+        }
+        |> Map.reject(fn {_key, value} -> is_nil(value) end),
+      effective_at: row.effective_at,
+      recorded_at: row.recorded_at,
+      entries: entries,
+      genealogy: genealogy
+    }
+  end
+
+  defp entry(entry, item_id, conversion_version, units) do
+    %Entry{
+      id: entry.id,
+      role: Map.fetch!(@roles, entry.role),
+      item_id: item_id,
+      location_id: entry.location_id,
+      native_quantity: entry.native_quantity,
+      native_unit: Map.fetch!(units, entry.native_unit_id),
+      recorded_quantity: entry.recorded_quantity,
+      recorded_unit: entry.recorded_unit_id && Map.fetch!(units, entry.recorded_unit_id),
+      conversion_id: entry.conversion_id,
+      conversion_version: conversion_version,
+      observation: entry.observation && Map.fetch!(@observations, entry.observation),
+      output_role: entry.output_role,
+      evidence: entry.evidence,
+      reconciliation_basis: entry.reconciliation_basis
+    }
+  end
+end

@@ -7,8 +7,10 @@ production posting authority that Production Execution registers.
 
 The public contract and its phases are defined in Bilimbi's
 [Inventory module plan](https://github.com/BelimbingApp/bilimbi/blob/main/docs/plans/factory/0010-inventory-module.md).
-Phase 1 (catalog, locations, and units) is built; the ledger, genealogy, and
-posting authority are not.
+Phase 1 (catalog, locations, and units) and Phase 2 (the Material
+Transaction ledger and the posting-authority registry) are built. Phase 3's
+lot and unit identities and genealogy reads are not; each transform already
+records the input-to-output links they will read.
 
 ## Public API
 
@@ -16,7 +18,8 @@ posting authority are not.
 `Bilimbi.Base.Tenancy.Scope` and a company ID; the company must be live in the
 scope's tenant (Core Company's `get_company/2` decides). A record of another
 company is reported as not found. Results are read models (`Item`, `Unit`,
-`Location`, `Material`, `Conversion`, `StockPosition`), never schemas.
+`Location`, `Material`, `Conversion`, `StockPosition`, `Transaction`,
+`Entry`), never schemas.
 
 | Area | Operations |
 | --- | --- |
@@ -26,6 +29,9 @@ company is reported as not found. Results are read models (`Item`, `Unit`,
 | Material identity | `register_material/4`, `get_material/3` |
 | Conversions | `define_conversion/5`, `list_conversions/3`, `get_conversion/5` |
 | Stock position | `get_stock_position/4` |
+| Ledger postings | `record_receipt/4`, `record_transfer/4`, `record_consumption/4`, `record_output/4`, `record_correction/4`, `record_transform/4` |
+| Ledger reads | `get_transaction/3`, `list_transactions/3` |
+| Posting authority | `register_posting_authority/1`, `posting_authority_registered?/1` |
 
 - **Material identity.** An item becomes a stocked material once, with a
   native unit that never changes afterwards. Stock quantities are always held
@@ -34,9 +40,53 @@ company is reported as not found. Results are read models (`Item`, `Unit`,
   immutable, so a changed factor is the next version. The earlier versions
   stay readable, so a converted quantity can name the basis it used.
 - **Stock positions.** A position is read by item and location, in the native
-  unit. Positions are views over the Material Transaction ledger. That ledger
-  is Phase 2, so every position reads zero today. Inventory does not depend on
-  Production Execution.
+  unit: the sum of the ledger's stock entries there. Inventory does not
+  depend on Production Execution.
+
+## Material Transaction ledger
+
+Every movement is one append-only transaction of signed entries in native
+units that sum to zero per unit. A stock entry is material at a location; a
+boundary entry is its counterpart outside stock (where a receipt came from,
+where consumption went); a variance entry is what a transform's observations
+do not account for. The `record_*` docs on the facade define each request.
+
+- **What a transaction keeps.** The actor, source evidence, the caller's
+  `request_id`, its effective time and Inventory's recorded time (a late entry
+  keeps both), and optional opaque context references (operation execution,
+  order or batch, Work Centre/Resource, shipment, destination) that Inventory
+  never interprets. A stock entry keeps the quantity and unit as recorded,
+  how it was obtained (measured, declared, counted, or derived), and the
+  conversion ID and version that derived its native quantity.
+- **Retries and competing use.** A repeated `request_id` returns the recorded
+  transaction; a different request under it is refused. A posting locks the
+  materials it touches before reading positions, and no location may go
+  negative, so two callers cannot consume the same quantity.
+- **Corrections.** A correction is a new transaction with a reason, the ID of
+  the transaction it corrects, and signed adjustment lines. The original never
+  changes: PostgreSQL refuses UPDATE, DELETE, and TRUNCATE on the ledger, and
+  a deferred trigger refuses a commit whose entries do not balance.
+- **Transforms.** Inputs, outputs, and their genealogy links commit together.
+  Every line shares one native unit. Observed quantities are never adjusted;
+  when inputs and outputs differ, the transform needs `variance` evidence and
+  a reconciliation basis, and the difference is recorded as a variance entry.
+  For example, 100 kg measured in, 78 kg measured finished, 17 kg derived
+  trim, and 2 kg measured waste leave a 3 kg variance.
+
+## Posting authority
+
+Receipts, transfers, and ordinary consumption and corrections are open to
+any caller. Output, transforms, a posting with operation execution, order or
+batch, or Work Centre/Resource context, and a correction of a posting that
+needed an authority are refused as `:unregistered_posting_authority` unless
+they carry `authority:` with a registered credential.
+
+`register_posting_authority/1` returns that credential. It refuses a module
+whose OTP application is not a Domain module of Inventory's own container, as
+its descriptor declares, and a module that has already registered, so no
+caller can obtain another module's credential. The registry is in memory, so
+the authority (Production Execution, when it lands) registers at every boot
+and keeps its credential private. Inventory names no registrant.
 
 ## Persistence
 
@@ -44,6 +94,7 @@ company is reported as not found. Results are read models (`Item`, `Unit`,
 | --- | --- | --- |
 | `commerce_inventory_items` | compatible baseline | Belimbing's item master, verified by `SchemaContract` and adopted as is |
 | `factory_inventory_units`, `factory_inventory_locations`, `factory_inventory_materials`, `factory_inventory_unit_conversions` | Bilimbi-only | company-owned; not in the schema contract, because an adopted Belimbing database gets them from `mix bilimbi.migrate` |
+| `factory_inventory_transactions`, `factory_inventory_transaction_entries`, `factory_inventory_genealogy_links` | Bilimbi-only | the ledger; append-only and balance-checked by triggers |
 
 The item master keeps Belimbing's own columns, including the location-less
 `quantity_on_hand` and free-text `storage_location`. Inventory neither changes
