@@ -188,9 +188,14 @@ defmodule Bilimbi.Factory.Inventory.TestFixtures do
         source_transaction_id bigint NOT NULL REFERENCES factory_inventory_transactions (id),
         kind varchar(8) NOT NULL,
         code varchar(255) NOT NULL,
+        dimensions jsonb NOT NULL DEFAULT '{}'::jsonb,
         CONSTRAINT factory_inventory_identities_company_id_material_id_code_index
           UNIQUE (company_id, material_id, code),
-        CONSTRAINT factory_inventory_identities_kind CHECK (kind IN ('lot', 'unit'))
+        CONSTRAINT factory_inventory_identities_kind CHECK (kind IN ('lot', 'unit')),
+        CONSTRAINT factory_inventory_identity_dimensions_shape CHECK
+          (jsonb_typeof(dimensions) = 'object' AND
+           (kind = 'unit' OR dimensions = '{}'::jsonb) AND
+           dimensions - 'width' - 'length' - 'thickness' = '{}'::jsonb)
       ) ON COMMIT PRESERVE ROWS
       """,
       "ALTER TABLE factory_inventory_transaction_entries ADD CONSTRAINT factory_inventory_transaction_entries_identity_id_fkey FOREIGN KEY (identity_id) REFERENCES factory_inventory_identities (id)",

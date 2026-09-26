@@ -14,12 +14,14 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
 
   alias Bilimbi.Base.Repo
   alias Bilimbi.Factory.Inventory.Entry
+  alias Bilimbi.Factory.Inventory.Dimension
   alias Bilimbi.Factory.Inventory.Ledger.Request
   alias Bilimbi.Factory.Inventory.PostingAuthority
   alias Bilimbi.Factory.Inventory.ReceiptMeasurement
   alias Bilimbi.Factory.Inventory.Schemas
   alias Bilimbi.Factory.Inventory.Transaction
   alias Bilimbi.Factory.Inventory.Unit
+  alias Bilimbi.Factory.Inventory.Location
 
   @production_context [:operation_execution, :order_or_batch, :work_centre]
   @always_production [:output, :transform]
@@ -105,6 +107,25 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
     |> then(&read_models(company_id, &1))
   end
 
+  @doc "Reads the corrections of a transaction, including corrections of those corrections, in ID order."
+  @spec corrections(pos_integer(), pos_integer()) :: [Transaction.t()]
+  def corrections(company_id, transaction_id), do: corrections(company_id, [transaction_id], [])
+
+  defp corrections(company_id, [], found),
+    do: read_models(company_id, Enum.sort_by(found, & &1.id))
+
+  defp corrections(company_id, ids, found) do
+    rows =
+      from(transaction in Schemas.Transaction,
+        where:
+          transaction.company_id == ^company_id and transaction.kind == "correction" and
+            transaction.corrects_transaction_id in ^ids
+      )
+      |> Repo.all()
+
+    corrections(company_id, Enum.map(rows, & &1.id), found ++ rows)
+  end
+
   @spec list(pos_integer(), keyword()) :: [Transaction.t()]
   def list(company_id, opts) do
     query =
@@ -147,6 +168,31 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
     )
     |> Repo.one()
     |> Decimal.new()
+  end
+
+  @doc "Current positive positions for one identity, grouped by location."
+  def identity_positions(company_id, identity_id) do
+    from(entry in Schemas.Entry,
+      join: location in Schemas.Location,
+      on: location.id == entry.location_id,
+      join: unit in Schemas.Unit,
+      on: unit.id == entry.native_unit_id,
+      where:
+        entry.company_id == ^company_id and entry.identity_id == ^identity_id and
+          entry.role == "stock",
+      group_by: [location.id, unit.id],
+      order_by: [asc: location.id],
+      select: {location, unit, sum(entry.native_quantity)}
+    )
+    |> Repo.all()
+    |> Enum.reject(fn {_location, _unit, quantity} -> not Decimal.gt?(quantity, 0) end)
+    |> Enum.map(fn {location, unit, quantity} ->
+      %{
+        location: Location.from_schema(location),
+        quantity: quantity,
+        unit: Unit.from_schema(unit)
+      }
+    end)
   end
 
   # ============================================================================
@@ -573,7 +619,18 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
       material_id: entry.material_id,
       source_transaction_id: transaction_id,
       kind: identity[:kind] || identity["kind"],
-      code: identity[:code] || identity["code"]
+      code: identity[:code] || identity["code"],
+      dimensions:
+        case identity[:dimensions] || identity["dimensions"] do
+          nil ->
+            %{}
+
+          dimensions ->
+            Map.new(dimensions, fn {name, value} ->
+              {:ok, dimension} = Dimension.parse(value)
+              {to_string(name), Dimension.stored(dimension)}
+            end)
+        end
     }
     |> Schemas.Identity.creation_changeset()
     |> Repo.insert()

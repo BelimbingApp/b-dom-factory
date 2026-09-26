@@ -81,6 +81,30 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenarioTest do
     assert {:ok, roll_identity} = Inventory.get_identity(scope, 73, roll_a)
     assert roll_identity.code == "ROLL-A" and roll_identity.kind == :unit
     assert roll_identity.source_transaction_id == elem(scenario.extrude, 1).id
+    assert roll_identity.dimensions.width.unit == :mm
+    assert roll_identity.dimensions.width.provenance == :measured
+    assert Decimal.eq?(roll_identity.dimensions.width.value, 1200)
+    assert Decimal.eq?(roll_identity.dimensions.length.value, 100)
+    assert Decimal.eq?(roll_identity.dimensions.thickness.value, 2)
+    assert {:ok, []} = Inventory.get_identity_positions(scope, 73, roll_a)
+
+    pack_b =
+      scenario.packs
+      |> List.last()
+      |> elem(1)
+      |> then(fn tx ->
+        Enum.find_value(
+          tx.entries,
+          &((&1.role == :stock and &1.item_id == items["PACK"].id and
+               Decimal.positive?(&1.native_quantity)) && &1.identity_id)
+        )
+      end)
+
+    assert {:ok, [%{location: finished, quantity: pack_quantity}]} =
+             Inventory.get_identity_positions(scope, 73, pack_b)
+
+    assert finished.id == locations.finished.id
+    assert Decimal.eq?(pack_quantity, 31)
     assert DateTime.compare(scenario.roll_source.effective_at, times.extrude) == :eq
     assert DateTime.diff(times.early_laminate, scenario.roll_source.effective_at, :hour) == 24
     assert DateTime.diff(times.mature_laminate, scenario.roll_source.effective_at, :hour) == 192
@@ -131,6 +155,28 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenarioTest do
                transaction.entries,
                &(&1.output_role == "waste" and &1.observation == :measured)
              )
+
+      assert {:ok, %{balances: [yield]}} = ProductionExecution.get_run_yield(scope, 73, cut.id)
+
+      assert Enum.all?(
+               [{:input, 49}, {:product, 32}, {:trim, 14}, {:waste, 2}, {:variance, 1}],
+               fn {field, expected} -> Decimal.eq?(Map.fetch!(yield, field), expected) end
+             ),
+             inspect(yield)
+
+      laminate_id =
+        Enum.find_value(
+          transaction.entries,
+          &((&1.role == :stock and Decimal.negative?(&1.native_quantity)) && &1.identity_id)
+        )
+
+      assert {:ok, %{runs: unit_runs}} =
+               ProductionExecution.get_unit_yield(scope, 73, laminate_id)
+
+      unit_yield = Enum.find(unit_runs, &(&1.execution_id == cut.id))
+      assert unit_yield.execution_id == cut.id
+      assert [%{unit_input: unit_input}] = unit_yield.balances
+      assert Decimal.eq?(unit_input, 49)
     end
 
     assert Enum.all?(scenario.cuts, fn {_run, tx} ->

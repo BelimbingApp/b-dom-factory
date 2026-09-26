@@ -458,6 +458,16 @@ defmodule Bilimbi.Factory.Inventory do
     with :ok <- live_company(scope, company_id), do: Genealogy.get(company_id, identity_id)
   end
 
+  @doc "Reads the current positive stock positions of an identified lot or unit. Empty means none remains in stock."
+  @spec get_identity_positions(Scope.t(), pos_integer(), pos_integer()) ::
+          {:ok, [map()]} | {:error, :company_not_found | :identity_not_found}
+  def get_identity_positions(%Scope{} = scope, company_id, identity_id) do
+    with :ok <- live_company(scope, company_id),
+         {:ok, identity} <- Genealogy.get(company_id, identity_id) do
+      {:ok, Ledger.identity_positions(company_id, identity.id)}
+    end
+  end
+
   @doc "Follows transform links from an output toward its source receipts."
   @spec trace_backward(Scope.t(), pos_integer(), pos_integer()) ::
           {:ok, Genealogy.trace()} | {:error, :company_not_found | :identity_not_found}
@@ -481,6 +491,15 @@ defmodule Bilimbi.Factory.Inventory do
     with :ok <- live_company(scope, company_id),
          {:ok, identity} <- Genealogy.get(company_id, identity_id),
          do: {:ok, Ledger.draws(company_id, identity.id)}
+  end
+
+  @doc "Lists the corrections of a transaction, following corrections of corrections, in ID order."
+  @spec list_corrections(Scope.t(), pos_integer(), pos_integer()) ::
+          {:ok, [Transaction.t()]} | {:error, :company_not_found | :transaction_not_found}
+  def list_corrections(%Scope{} = scope, company_id, transaction_id) do
+    with :ok <- live_company(scope, company_id),
+         {:ok, transaction} <- Ledger.get(company_id, transaction_id),
+         do: {:ok, Ledger.corrections(company_id, transaction.id)}
   end
 
   @spec get_transaction(Scope.t(), pos_integer(), pos_integer()) ::

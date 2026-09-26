@@ -451,11 +451,27 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenario do
       location_id: location.id,
       quantity: quantity,
       observation: observation,
-      identity: %{kind: kind, code: code}
+      identity:
+        %{kind: kind, code: code}
+        |> maybe_dimensions(code)
     }
     |> put_optional(:evidence, evidence)
     |> put_optional(:output_role, role)
   end
+
+  defp maybe_dimensions(identity, "ROLL-" <> _) do
+    Map.put(identity, :dimensions, %{
+      width: %{value: 1200, unit: "mm", provenance: "measured"},
+      length: %{value: 100, unit: "m", provenance: "measured"},
+      thickness: %{value: 2, unit: "mm", provenance: "measured"}
+    })
+  end
+
+  defp maybe_dimensions(identity, "CUT-" <> _) do
+    Map.put(identity, :dimensions, %{width: %{value: 800, unit: "mm", provenance: "nominal"}})
+  end
+
+  defp maybe_dimensions(identity, _), do: identity
 
   defp draw(item, location, quantity, identity_id),
     do: %{

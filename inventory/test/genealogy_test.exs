@@ -6,6 +6,100 @@ defmodule Bilimbi.Factory.Inventory.GenealogyTest do
 
   import Bilimbi.Factory.Inventory.TestFixtures
 
+  test "receipt dimensions are typed, validated, and positions follow transfers and draws" do
+    %{scope: scope, coil: coil, receiving: receiving, slitter: slitter} = mill!()
+    width = %{value: "1200.5", unit: "mm", provenance: "measured"}
+
+    line = %{
+      item_id: coil.id,
+      location_id: receiving.id,
+      quantity: 10,
+      observation: "measured",
+      identity: %{kind: "unit", code: "ROLL-1", dimensions: %{width: width}}
+    }
+
+    assert {:error, %Ecto.Changeset{}} =
+             Inventory.record_receipt(
+               scope,
+               73,
+               request("DIM-BAD",
+                 lines: [put_in(line, [:identity, :dimensions, :width, :provenance], "guessed")]
+               )
+             )
+
+    for value <- ["Infinity", "-Infinity", "NaN"] do
+      assert {:error, %Ecto.Changeset{}} =
+               Inventory.record_receipt(
+                 scope,
+                 73,
+                 request("DIM-#{value}",
+                   lines: [put_in(line, [:identity, :dimensions, :width, :value], value)]
+                 )
+               )
+    end
+
+    assert {:error, %Ecto.Changeset{}} =
+             Inventory.record_receipt(
+               scope,
+               73,
+               request("DIM-LOT", lines: [put_in(line, [:identity, :kind], "lot")])
+             )
+
+    assert {:ok, receipt} = Inventory.record_receipt(scope, 73, request("DIM-RCV", lines: [line]))
+    identity_id = hd(receipt.entries).identity_id
+    assert {:ok, identity} = Inventory.get_identity(scope, 73, identity_id)
+    assert identity.dimensions.width.unit == :mm
+    assert identity.dimensions.width.provenance == :measured
+    assert Decimal.eq?(identity.dimensions.width.value, "1200.5")
+
+    assert {:ok, [%{location: location, quantity: quantity}]} =
+             Inventory.get_identity_positions(scope, 73, identity_id)
+
+    assert location.id == receiving.id and Decimal.eq?(quantity, 10)
+
+    assert {:ok, _} =
+             Inventory.record_transfer(
+               scope,
+               73,
+               request("DIM-MOVE",
+                 lines: [
+                   %{
+                     item_id: coil.id,
+                     from_location_id: receiving.id,
+                     to_location_id: slitter.id,
+                     quantity: 10,
+                     observation: "counted",
+                     identity_id: identity_id
+                   }
+                 ]
+               )
+             )
+
+    assert {:ok, [%{location: location, quantity: quantity}]} =
+             Inventory.get_identity_positions(scope, 73, identity_id)
+
+    assert location.id == slitter.id and Decimal.eq?(quantity, 10)
+
+    assert {:ok, _} =
+             Inventory.record_consumption(
+               scope,
+               73,
+               request("DIM-DRAW",
+                 lines: [
+                   %{
+                     item_id: coil.id,
+                     location_id: slitter.id,
+                     quantity: 10,
+                     observation: "measured",
+                     identity_id: identity_id
+                   }
+                 ]
+               )
+             )
+
+    assert {:ok, []} = Inventory.get_identity_positions(scope, 73, identity_id)
+  end
+
   test "an identified output traces to a receipt and the receipt traces to descendants" do
     %{scope: scope, coil: coil, sheet: sheet, trim: trim, kg: kg} = context = mill!()
     %{receiving: receiving, slitter: slitter} = context
@@ -212,5 +306,25 @@ defmodule Bilimbi.Factory.Inventory.GenealogyTest do
     assert {:error, :identity_not_found} = Inventory.trace_forward(scope, 74, source_id)
     assert {:error, :identity_not_found} = Inventory.get_identity(scope, 73, "#{source_id}")
     assert {:error, :identity_not_found} = Inventory.trace_backward(scope, 73, "#{source_id}")
+  end
+
+  # A composed host has no :um, :measured or :thickness atom until a module
+  # defines one, and this file's literals would create them, so a fresh BEAM
+  # with only the compiled code reads the stored strings.
+  test "stored dimension strings parse in a node that has not seen their atoms" do
+    paths =
+      Enum.flat_map([Bilimbi.Factory.Inventory.Dimension, Decimal, Kernel], fn module ->
+        ["-pa", module |> :code.which() |> Path.dirname()]
+      end)
+
+    probe = """
+    D = 'Elixir.Bilimbi.Factory.Inventory.Dimension',
+    {ok, M} = D:parse(\#{<<"value">> => <<"12">>, <<"unit">> => <<"um">>, <<"provenance">> => <<"measured">>}),
+    io:format("~s ~s ~s", [maps:get(unit, M), maps:get(provenance, M), D:'name!'(<<"thickness">>)]),
+    halt().
+    """
+
+    assert {"um measured thickness", 0} =
+             System.cmd(System.find_executable("erl"), paths ++ ["-noshell", "-eval", probe])
   end
 end

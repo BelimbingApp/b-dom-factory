@@ -80,6 +80,22 @@ transforms that drew a visited identity (`Inventory.list_identity_draws/3`),
 so a run without an identified output still appears. Inventory alone stores
 material ancestry.
 
+`get_run_yield/3` derives one execution's `balances` from its linked Inventory
+transaction: one group per native unit, each with that unit, input, product,
+trim, waste, and signed variance. A single-unit run has one group; a run that
+mixes kilograms and litres has two, and quantities are never converted between
+units. Product includes output roles other than `trim` and `waste`. Each
+correction of the run's transaction, and each correction of those corrections
+(`Inventory.list_corrections/3`), nets into the side of the run entry it adjusts,
+so yields agree with `Inventory.get_identity_positions/3`. `corrected` is true
+when any exist and `correction_transaction_ids` lists them in ID order.
+`get_unit_yield/3` lists the balances of the unit's creation run and later
+production draws; each group also carries that unit's own `unit_input` and
+`unit_output`. A balance belongs to the whole run; Factory does not invent a
+share of a multi-input run for one unit.
+Only transforms have an input-to-output conservation balance; a standalone
+output or consumption run has one side only.
+
 The [representative Mr Packaging scenario](mr-packaging-scenario.md) exercises
 these contracts from receipt to despatch and lists every plant assumption and
 public-contract limit found during that validation.

@@ -326,11 +326,27 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenario do
       location_id: location.id,
       quantity: quantity,
       observation: observation,
-      identity: %{kind: kind, code: code}
+      identity:
+        %{kind: kind, code: code}
+        |> maybe_dimensions(code)
     }
     |> optional(:output_role, role)
     |> optional(:evidence, evidence)
   end
+
+  defp maybe_dimensions(identity, "COATED-ROLL-" <> _) do
+    Map.put(identity, :dimensions, %{width: %{value: 1200, unit: "mm", provenance: "nominal"}})
+  end
+
+  defp maybe_dimensions(identity, "SLIT-600-" <> _) do
+    Map.put(identity, :dimensions, %{width: %{value: 600, unit: "mm", provenance: "measured"}})
+  end
+
+  defp maybe_dimensions(identity, "SLIT-300-" <> _) do
+    Map.put(identity, :dimensions, %{width: %{value: 300, unit: "mm", provenance: "measured"}})
+  end
+
+  defp maybe_dimensions(identity, _), do: identity
 
   defp draw(item, location, quantity, identity_id),
     do: %{

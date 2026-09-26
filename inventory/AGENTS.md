@@ -4,6 +4,11 @@
   `ReceiptMeasurement` read model; free-text evidence cannot validate net stock
   or expose supplier variance consistently. See `lib/inventory/receipt_measurement.ex`
   and `docs/README.md`.
+- Put unit dimensions on a new receipt or production output's `identity`, as
+  validated by `lib/inventory/ledger/request.ex`; use `get_identity/3` and
+  `get_identity_positions/3` for dimensions and current stock. Do not parse
+  line evidence for dimensions or persist a separate current-location field:
+  `lib/inventory/ledger.ex` derives locations from stock entries.
 
 ## Maintaining this file
 

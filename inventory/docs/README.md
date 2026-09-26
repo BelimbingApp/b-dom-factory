@@ -29,8 +29,8 @@ company is reported as not found. Results are read models (`Item`, `Unit`,
 | Stock position | `get_stock_position/4` |
 | Ledger postings | `record_receipt/3`, `record_transfer/3`, `record_consumption/3`, `record_correction/3` |
 | Production postings | `record_output/4`, `record_transform/4`, `record_production_consumption/4`, `record_production_correction/4` |
-| Ledger reads | `get_transaction/3`, `list_transactions/3` |
-| Lot and unit genealogy | `get_identity/3`, `trace_backward/3`, `trace_forward/3`, `list_identity_draws/3` |
+| Ledger reads | `get_transaction/3`, `list_transactions/3`, `list_corrections/3` |
+| Lot and unit genealogy | `get_identity/3`, `get_identity_positions/3`, `trace_backward/3`, `trace_forward/3`, `list_identity_draws/3` |
 | Posting authority | `posting_authority_registered?/1` |
 
 - **Material identity.** An item becomes a stocked material once, with a
@@ -72,6 +72,8 @@ do not account for. The `record_*` docs on the facade define each request.
   the transaction it corrects, and signed adjustment lines. The original never
   changes: PostgreSQL refuses UPDATE, DELETE, and TRUNCATE on the ledger, and
   a deferred trigger refuses a commit whose entries do not balance.
+  `list_corrections/3` reads a transaction's corrections, following
+  corrections of corrections.
 - **Transforms.** Inputs, outputs, and their genealogy links commit together.
   Every line shares one native unit. Observed quantities are never adjusted;
   when inputs and outputs differ, the transform needs `variance` evidence and
@@ -89,7 +91,13 @@ When a transform uses any identity, every input and output must be identified.
 Inventory checks both the overall location balance and the balance of the
 specific identity, or the unidentified pool, before a draw. The stock entry
 exposes `identity_id`, while `get_identity/3` returns the immutable code, kind,
-item, and source transaction.
+item, and source transaction. For an individual unit, the creating line may
+also include `dimensions: %{width: %{value: "1200", unit: "mm", provenance:
+"measured"}}` inside `identity`. `length` and `thickness` use the same shape;
+units are `um`, `mm`, `cm`, or `m`, and provenance is `measured` or `nominal`.
+The typed dimensions remain on the immutable identity. `get_identity_positions/3`
+returns its positive stock balances by location from the ledger, or an empty
+list after the unit has been fully drawn.
 
 `trace_backward/3` and `trace_forward/3` walk the transform links between
 identities across any number of transformations. They return the root identity,

@@ -50,10 +50,13 @@ only here, not in the fixture.
   no typed public query for these fields. Confirm which must be durable per
   run and searchable before widening a generic contract (lines 166–169,
   223–225).
-- Widths are output line evidence and trim is a derived Inventory output. The
-  current public read model has no typed per-roll dimension or yield report;
-  consumers would parse evidence to group by width or line. Confirm the
-  physical measurement and reporting workflow before adding those reads
+- Identified rolls now carry typed width with unit and measured or nominal
+  provenance. `Inventory.get_identity/3` reads it, while
+  `Inventory.get_identity_positions/3` derives current location and balance
+  from stock entries. `ProductionExecution.get_run_yield/3` reads the slitting
+  run's 125 kg input, 90 kg product, 30 kg derived trim, 3 kg waste and 2 kg
+  variance; `get_unit_yield/3` associates the coated input roll with that
+  balance. Physical measurement and KPI policy still need plant confirmation
   (lines 170–173, 229–232).
 - The pending Quality token is an opaque reference, not a QAC result. A real
   Quality link and access policy await the shared Quality owner's public API
