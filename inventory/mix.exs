@@ -21,8 +21,10 @@ defmodule Bilimbi.Factory.Inventory.MixProject do
       elixir: "~> 1.20",
       compilers: [:bilimbi_graph] ++ Mix.compilers(),
       bilimbi_module_root: __DIR__,
+      elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
-      deps: Bilimbi.Base.ModuleRegistry.MixDiscovery.module_dependencies(__DIR__)
+      aliases: aliases(),
+      deps: deps()
     ]
   end
 
@@ -31,5 +33,17 @@ defmodule Bilimbi.Factory.Inventory.MixProject do
       extra_applications: [:logger],
       env: Bilimbi.Base.ModuleRegistry.MixDiscovery.application_env(__DIR__)
     ]
+  end
+
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_env), do: ["lib"]
+
+  defp deps do
+    [{:ecto_sql, "~> 3.14"}] ++
+      Bilimbi.Base.ModuleRegistry.MixDiscovery.module_dependencies(__DIR__)
+  end
+
+  defp aliases do
+    [test: ["ecto.create --quiet -r Bilimbi.Base.Repo", "test"]]
   end
 end
