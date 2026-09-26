@@ -307,4 +307,24 @@ defmodule Bilimbi.Factory.Inventory.GenealogyTest do
     assert {:error, :identity_not_found} = Inventory.get_identity(scope, 73, "#{source_id}")
     assert {:error, :identity_not_found} = Inventory.trace_backward(scope, 73, "#{source_id}")
   end
+
+  # A composed host has no :um, :measured or :thickness atom until a module
+  # defines one, and this file's literals would create them, so a fresh BEAM
+  # with only the compiled code reads the stored strings.
+  test "stored dimension strings parse in a node that has not seen their atoms" do
+    paths =
+      Enum.flat_map([Bilimbi.Factory.Inventory.Dimension, Decimal, Kernel], fn module ->
+        ["-pa", module |> :code.which() |> Path.dirname()]
+      end)
+
+    probe = """
+    D = 'Elixir.Bilimbi.Factory.Inventory.Dimension',
+    {ok, M} = D:parse(\#{<<"value">> => <<"12">>, <<"unit">> => <<"um">>, <<"provenance">> => <<"measured">>}),
+    io:format("~s ~s ~s", [maps:get(unit, M), maps:get(provenance, M), D:'name!'(<<"thickness">>)]),
+    halt().
+    """
+
+    assert {"um measured thickness", 0} =
+             System.cmd(System.find_executable("erl"), paths ++ ["-noshell", "-eval", probe])
+  end
 end

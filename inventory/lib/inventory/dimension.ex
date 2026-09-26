@@ -10,8 +10,9 @@ defmodule Bilimbi.Factory.Inventory.Dimension do
           provenance: :measured | :nominal
         }
 
-  @units ~w(um mm cm m)
-  @provenances ~w(measured nominal)
+  @units %{"um" => :um, "mm" => :mm, "cm" => :cm, "m" => :m}
+  @provenances %{"measured" => :measured, "nominal" => :nominal}
+  @names %{"width" => :width, "length" => :length, "thickness" => :thickness}
 
   @spec parse(map()) :: {:ok, t()} | :error
   def parse(value) when is_map(value) do
@@ -23,20 +24,19 @@ defmodule Bilimbi.Factory.Inventory.Dimension do
          {:ok, decimal} <- decimal(measurement),
          false <- Decimal.inf?(decimal) or Decimal.nan?(decimal),
          true <- Decimal.gt?(decimal, 0) and Decimal.eq?(Decimal.round(decimal, 12), decimal),
-         unit when unit in @units <- name(unit),
-         provenance when provenance in @provenances <- name(provenance) do
-      {:ok,
-       %__MODULE__{
-         value: decimal,
-         unit: String.to_existing_atom(unit),
-         provenance: String.to_existing_atom(provenance)
-       }}
+         {:ok, unit} <- Map.fetch(@units, name(unit)),
+         {:ok, provenance} <- Map.fetch(@provenances, name(provenance)) do
+      {:ok, %__MODULE__{value: decimal, unit: unit, provenance: provenance}}
     else
       _ -> :error
     end
   end
 
   def parse(_), do: :error
+
+  @doc "Maps a stored dimension name to its atom."
+  @spec name!(String.t()) :: :width | :length | :thickness
+  def name!(name), do: Map.fetch!(@names, name)
 
   defp name(value) when is_binary(value), do: value
   defp name(value) when is_atom(value), do: Atom.to_string(value)

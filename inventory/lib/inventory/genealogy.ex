@@ -107,7 +107,7 @@ defmodule Bilimbi.Factory.Inventory.Genealogy do
       dimensions:
         Map.new(row.dimensions || %{}, fn {name, value} ->
           {:ok, dimension} = Bilimbi.Factory.Inventory.Dimension.parse(value)
-          {String.to_existing_atom(name), dimension}
+          {Bilimbi.Factory.Inventory.Dimension.name!(name), dimension}
         end)
     }
   end
