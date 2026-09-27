@@ -1,7 +1,8 @@
-defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenario do
+defmodule Bilimbi.Factory.ProductionExecution.FoamPackScenario do
   @moduledoc """
-  Representative Mr Packaging configuration and seed data. Values are test
-  assumptions, not plant-confirmed settings; see docs/mr-packaging-scenario.md.
+  Representative configuration and seed data for a generic foam pack chain at
+  a packaging manufacturer. Values are test assumptions, not plant-confirmed
+  settings; see docs/foam-pack-scenario.md.
   All material writes use Factory's public facades.
   """
 
@@ -56,7 +57,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenario do
       Inventory.record_receipt(
         scope,
         @company,
-        request("MRP-LORRY-1",
+        request("FP-LORRY-1",
           actor_id: 11,
           effective_at: times.receipt,
           evidence: "delivery note DN-1; supplier SUP-1; vehicle JQK-1234; weigh ticket WT-1",
@@ -79,7 +80,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenario do
       Inventory.record_receipt(
         scope,
         @company,
-        request("MRP-RECYCLE-1",
+        request("FP-RECYCLE-1",
           effective_at: times.receipt,
           evidence: "delivery note DN-2; supplier SUP-2",
           lines: [line(items["RECYCLED"], receiving, 30, "measured", "RECYCLE-LOT-1", "lot")]
@@ -90,7 +91,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenario do
       Inventory.record_receipt(
         scope,
         @company,
-        request("MRP-FILM-1",
+        request("FP-FILM-1",
           effective_at: times.receipt,
           lines: [line(items["FILM"], receiving, 4, "measured", "FILM-LOT-1", "lot")]
         )
@@ -108,7 +109,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenario do
         Inventory.record_transfer(
           scope,
           @company,
-          request("MRP-STAGE-#{code}",
+          request("FP-STAGE-#{code}",
             effective_at: times.stage,
             lines: [move(item, receiving, locations.line, quantity, id)]
           )
@@ -155,7 +156,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenario do
       for {{code, inputs, outputs}, sequence} <- Enum.with_index(operations, 1) do
         {:ok, resource} =
           ProductDefinition.create_resource(scope, @company, %{
-            code: "MRP-#{code}",
+            code: "FP-#{code}",
             name: code,
             kind: "machine"
           })
@@ -177,7 +178,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenario do
 
     {:ok, order} =
       ProductionExecution.create_order(scope, @company, %{
-        code: "MRP-FORECAST-1",
+        code: "FP-FORECAST-1",
         kind: "batch",
         product_id: product.id,
         formula_version: formula.version,
@@ -200,7 +201,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenario do
       run!(
         config,
         "EXTRUDE",
-        "MRP-EX-1",
+        "FP-EX-1",
         times.extrude,
         [
           draw(items["VIRGIN"], locations.line, 70, virgin_id),
@@ -227,7 +228,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenario do
           )
         ],
         %{
-          evidence: "MRP-EX-1 run sheet",
+          evidence: "FP-EX-1 run sheet",
           reconciliation_basis: "4 kg representative extrusion loss"
         }
       )
@@ -238,7 +239,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenario do
       Inventory.record_transfer(
         scope,
         @company,
-        request("MRP-ROLLS-TO-CURE",
+        request("FP-ROLLS-TO-CURE",
           effective_at: times.cure_move,
           evidence: "Scanned roll labels into cure bay",
           lines: [
@@ -260,7 +261,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenario do
       run(
         config,
         "LAMINATE",
-        "MRP-LA-REFUSED",
+        "FP-LA-REFUSED",
         times.early_laminate,
         [
           draw(items["FOAM-ROLL"], locations.cure, 48, roll_a),
@@ -274,7 +275,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenario do
       run!(
         config,
         "LAMINATE",
-        "MRP-LA-1",
+        "FP-LA-1",
         times.early_laminate,
         [
           draw(items["FOAM-ROLL"], locations.cure, 48, roll_a),
@@ -289,7 +290,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenario do
       run!(
         config,
         "LAMINATE",
-        "MRP-LA-2",
+        "FP-LA-2",
         times.mature_laminate,
         [
           draw(items["FOAM-ROLL"], locations.cure, 48, roll_b),
@@ -310,7 +311,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenario do
           run!(
             config,
             "CUT",
-            "MRP-CUT-#{suffix}",
+            "FP-CUT-#{suffix}",
             at,
             [draw(items["LAMINATE"], locations.convert, 49, laminate_id)],
             [
@@ -365,7 +366,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenario do
           run!(
             config,
             "PACK",
-            "MRP-PACK-#{suffix}",
+            "FP-PACK-#{suffix}",
             at,
             [draw(items["CUT-800"], locations.convert, 32, cut_id)],
             [
@@ -401,7 +402,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenario do
       Inventory.record_consumption(
         scope,
         @company,
-        request("MRP-DESPATCH-1",
+        request("FP-DESPATCH-1",
           effective_at: times.despatch,
           context: %{shipment: "shipment:SHP-1", destination: "customer:DEST-1"},
           evidence: "Despatch note D-1",

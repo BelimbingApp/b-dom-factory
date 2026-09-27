@@ -96,8 +96,9 @@ share of a multi-input run for one unit.
 Only transforms have an input-to-output conservation balance; a standalone
 output or consumption run has one side only.
 
-The [representative Mr Packaging scenario](mr-packaging-scenario.md) exercises
+The [representative foam pack scenario](foam-pack-scenario.md) exercises
 these contracts from receipt to despatch and lists every plant assumption and
 public-contract limit found during that validation.
-The [representative SBG scenario](sbg-scenario.md) does the same for glue,
-coating, and slitting.
+The [representative mix, coat, and slit scenario](mix-coat-slit-scenario.md)
+does the same for glue mixing, coating, and slitting, including historical
+import submissions.
