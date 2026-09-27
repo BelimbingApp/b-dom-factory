@@ -27,7 +27,7 @@ defmodule Bilimbi.Factory.ProductionExecution.WorkflowTest do
 
   test "foam, coil-slitting, and mixed-unit coating chains reconcile from Inventory transactions without changing earlier history",
        context do
-    %{scope: scope} = context
+    %{scope: scope, kg: kg} = context
 
     foam = foam_chain!(context)
     {:ok, after_foam} = Inventory.list_transactions(scope, 73, limit: 500)
@@ -143,6 +143,51 @@ defmodule Bilimbi.Factory.ProductionExecution.WorkflowTest do
              Enum.sort(coating.receipts)
 
     assert Enum.map(roll_trace.runs, & &1.operation_code) == ["COAT", "SLIT"]
+
+    # The coating run was weighed in kilograms on both sides, so its yield
+    # carries a mass balance across units that names the conversion version
+    # each line was posted through: 20 kg of film and 30 kg of glue in, 48 kg
+    # out. A later conversion version restates nothing already posted.
+    {coat, _request} = coating.coat
+
+    assert {:ok, %{cross_unit: [mass]} = run_yield} =
+             ProductionExecution.get_run_yield(scope, 73, coat.id)
+
+    assert mass.unit.code == "kg"
+    assert Decimal.eq?(mass.input, 50) and Decimal.eq?(mass.output, 48)
+    assert Decimal.eq?(mass.difference, 2)
+
+    assert Enum.sort_by(mass.conversions, & &1.item_id) ==
+             Enum.sort_by(
+               [
+                 %{
+                   item_id: coating.conversions.film.item_id,
+                   conversion_id: coating.conversions.film.id,
+                   version: 1,
+                   factor: coating.conversions.film.factor
+                 },
+                 %{
+                   item_id: coating.conversions.coated.item_id,
+                   conversion_id: coating.conversions.coated.id,
+                   version: 1,
+                   factor: coating.conversions.coated.factor
+                 }
+               ],
+               & &1.item_id
+             )
+
+    {:ok, unit_yield} = ProductionExecution.get_unit_yield(scope, 73, coating.coated_lot)
+    {:ok, balance} = Inventory.get_transaction_balance(scope, 73, coat.inventory_transaction_id)
+
+    for {item, factor} <- [{coating.conversions.film, "5"}, {coating.conversions.coated, "8"}] do
+      {:ok, %{version: 2}} = Inventory.define_conversion(scope, 73, item.item_id, kg.id, factor)
+    end
+
+    assert {:ok, ^run_yield} = ProductionExecution.get_run_yield(scope, 73, coat.id)
+    assert {:ok, ^unit_yield} = ProductionExecution.get_unit_yield(scope, 73, coating.coated_lot)
+
+    assert {:ok, ^balance} =
+             Inventory.get_transaction_balance(scope, 73, coat.inventory_transaction_id)
   end
 
   # Foam: polyol and isocyanate extrude to a raw bun that loses blowing gas,
@@ -377,6 +422,11 @@ defmodule Bilimbi.Factory.ProductionExecution.WorkflowTest do
 
     [film_lot, glue_lot] = Enum.map(receipts, &hd(&1.entries).identity_id)
 
+    # The film and the coated roll are weighed on the coater: 1 kg of film is
+    # 10 m2 and 1 kg of coated film is 4 m2.
+    {:ok, film_kg} = Inventory.define_conversion(scope, 73, film.id, kg.id, "10")
+    {:ok, coated_kg} = Inventory.define_conversion(scope, 73, coated.id, kg.id, "4")
+
     order =
       order!(scope, kg, rolls, "WEB-BATCH-1", [
         {"COAT", [film, glue], [coated]},
@@ -388,14 +438,22 @@ defmodule Bilimbi.Factory.ProductionExecution.WorkflowTest do
         scope,
         order,
         "WEB-CO-1",
-        [draw(film, receiving, 200, film_lot), draw(glue, receiving, 30, glue_lot)],
-        [make(coated, line, 200, "COATED-1")],
+        [
+          Map.put(draw(film, receiving, 20, film_lot), :unit_id, kg.id),
+          draw(glue, receiving, 30, glue_lot)
+        ],
+        [Map.put(make(coated, line, 48, "COATED-1"), :unit_id, kg.id)],
         %{
           units: [
             %{
+              unit_id: m2.id,
+              evidence: "Coater length counter",
+              reconciliation_basis: "Film area in less coated area out"
+            },
+            %{
               unit_id: kg.id,
               evidence: "Glue pump totaliser",
-              reconciliation_basis: "Glue applied to the film is not weighed on the roll"
+              reconciliation_basis: "Glue applied to the film has no mass output in kilograms"
             }
           ]
         }
@@ -406,7 +464,7 @@ defmodule Bilimbi.Factory.ProductionExecution.WorkflowTest do
         scope,
         order,
         "WEB-SL-1",
-        [draw(coated, line, 200, coated_lot)],
+        [draw(coated, line, 192, coated_lot)],
         [
           make(rolls, line, 3, "ROLLS-1", "counted", "finished"),
           make(edge, yard, 4, "EDGE-1", "measured", "trim")
@@ -437,9 +495,12 @@ defmodule Bilimbi.Factory.ProductionExecution.WorkflowTest do
       runs: [coat, slit],
       receipts: Enum.map(receipts, & &1.id),
       outputs: outputs,
+      coat: coat,
+      coated_lot: coated_lot,
+      conversions: %{film: film_kg, coated: coated_kg},
       variances: %{
-        "COAT" => [{"kg", 30}],
-        "SLIT" => [{"m2", 200}, {"roll", -3}, {"kg", -4}]
+        "COAT" => [{"m2", 8}, {"kg", 30}],
+        "SLIT" => [{"m2", 192}, {"roll", -3}, {"kg", -4}]
       },
       stock: %{
         film: {film, receiving},
@@ -579,9 +640,14 @@ defmodule Bilimbi.Factory.ProductionExecution.WorkflowTest do
       {line.item_id, line.location_id,
        Decimal.normalize(Decimal.mult(Decimal.new(line.quantity), sign))}
 
+  # A line is kept as recorded, so a line posted in another unit compares by
+  # its recorded quantity, signed as its stock effect.
   defp stock_lines(transaction) do
     for %{role: :stock} = entry <- transaction.entries do
-      {entry.item_id, entry.location_id, Decimal.normalize(entry.native_quantity)}
+      sign = if Decimal.negative?(entry.native_quantity), do: -1, else: 1
+
+      {entry.item_id, entry.location_id,
+       Decimal.normalize(Decimal.mult(entry.recorded_quantity, sign))}
     end
     |> Enum.sort()
   end

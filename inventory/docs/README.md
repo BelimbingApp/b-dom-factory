@@ -180,7 +180,7 @@ These tests hold Inventory's Phase 4 claims:
 | An Extension cannot register (its declaration fails Inventory's boot) or post production context | `test/posting_authority_test.exs` |
 | Production Execution is the declared authority, and its postings carry actual inputs and outputs, opaque context, and the execution's evidence atomically | `test/posting_boundary_test.exs` (compiled graph), `production_execution/test/execution_test.exs`, `production_execution/test/workflow_test.exs` |
 | Distinct factory workflows (a foam extrude-cure-laminate-cut chain, coil slitting, and a coating-and-slitting chain mixing area, mass, and counted rolls) reconcile from Inventory transactions without changing earlier history | `production_execution/test/workflow_test.exs` |
-| A transform balances per native unit with a variance per unit, and a cross-unit balance exists only in a unit every line was posted in | `test/transform_test.exs`, `production_execution/test/sbg_scenario_test.exs` |
+| A transform balances per native unit with a variance per unit, and a cross-unit balance exists only in a unit every line was posted in | `test/transform_test.exs`, `production_execution/test/workflow_test.exs` |
 
 The workflows are test fixtures only; Inventory holds no process rule or
 source mapping for either.
