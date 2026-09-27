@@ -7,8 +7,11 @@ defmodule Bilimbi.Factory.ProductionExecution.Contributions do
     %{
       authz: %{
         domains: %{"factory" => "Factory operations"},
-        verbs: ["override"],
-        capabilities: ["factory.production-execution.material-hold.override"],
+        verbs: ["import", "override"],
+        capabilities: [
+          "factory.production-execution.import",
+          "factory.production-execution.material-hold.override"
+        ],
         roles: %{}
       }
     }

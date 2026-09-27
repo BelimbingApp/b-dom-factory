@@ -1,8 +1,10 @@
 Code.require_file("support/mix_coat_slit_scenario.ex", __DIR__)
 
 defmodule Bilimbi.Factory.ProductionExecution.MixCoatSlitScenarioTest do
-  use Bilimbi.Base.Database.DataCase, async: true
+  use Bilimbi.Base.Database.DataCase, async: false
 
+  alias Bilimbi.Base.Authz
+  alias Bilimbi.Base.Tenancy.Authentication
   alias Bilimbi.Factory.{Inventory, ProductDefinition, ProductionExecution}
   alias Bilimbi.Factory.ProductionExecution.MixCoatSlitScenario
 
@@ -12,7 +14,19 @@ defmodule Bilimbi.Factory.ProductionExecution.MixCoatSlitScenarioTest do
   setup do
     context = mill!()
     create_production_tables!()
-    context
+    install_authz!()
+
+    assert {:ok, :stored} =
+             Authz.put_principal_capability(
+               context.scope,
+               73,
+               :user,
+               9,
+               "factory.production-execution.import",
+               true
+             )
+
+    %{context | scope: Authentication.sign_in(context.scope, 9, 73)}
   end
 
   test "a synthetic mix, coat and slit chain reconciles through Factory",

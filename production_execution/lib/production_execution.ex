@@ -95,14 +95,17 @@ defmodule Bilimbi.Factory.ProductionExecution do
 
   @doc """
   Completes one routed operation. `source` is `:live` or `:import`; both use
-  identical validation and posting. The request contains a company-unique
+  identical validation and posting, but an import first requires the
+  `factory.production-execution.import` capability (see `docs/README.md`).
+  The request contains a company-unique
   `request_id`, operation code, resource ID, operator type and ID, start and
   completion times, evidence, actual input and output lines, and optional
   Inventory variance evidence. An identical retry returns the original result.
   """
   def complete_operation(%Scope{} = scope, company_id, order_id, source, attrs)
       when source in [:live, :import] and is_map(attrs) do
-    with {:ok, order} <- get_order(scope, company_id, order_id),
+    with :ok <- authorize_import(scope, company_id, order_id, source),
+         {:ok, order} <- get_order(scope, company_id, order_id),
          {:ok, selected} <- selected_revisions(scope, company_id, order),
          {:ok, request} <- validate(scope, company_id, order, selected, source, attrs),
          {:ok, overrides} <- check_holds(scope, company_id, request) do
@@ -130,6 +133,19 @@ defmodule Bilimbi.Factory.ProductionExecution do
 
   def complete_operation(%Scope{}, _company_id, _order_id, _source, _attrs),
     do: {:error, :invalid_execution}
+
+  defp authorize_import(_scope, _company_id, _order_id, :live), do: :ok
+
+  defp authorize_import(scope, company_id, order_id, :import) do
+    resource =
+      Authz.resource("factory.production_order", order_id, company_id: company_id, scope: scope)
+
+    if Authz.can(scope, "factory.production-execution.import", resource).allowed do
+      :ok
+    else
+      {:error, :import_not_authorized}
+    end
+  end
 
   def get_execution(%Scope{} = scope, company_id, execution_id) do
     with {:ok, _company} <- company(scope, company_id) do
