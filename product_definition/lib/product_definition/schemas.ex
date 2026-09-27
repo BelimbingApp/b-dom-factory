@@ -14,6 +14,8 @@ defmodule Bilimbi.Factory.ProductDefinition.Schemas.Product do
     %__MODULE__{}
     |> cast(attrs, [:company_id, :item_id, :code, :name])
     |> validate_required([:company_id, :item_id, :code, :name])
+    |> validate_length(:code, max: 64)
+    |> validate_length(:name, max: 255)
     |> unique_constraint([:company_id, :code], name: :factory_products_company_code_unique)
     |> unique_constraint([:company_id, :item_id], name: :factory_products_company_item_unique)
   end
@@ -78,6 +80,8 @@ defmodule Bilimbi.Factory.ProductDefinition.Schemas.Resource do
     %__MODULE__{}
     |> cast(attrs, [:company_id, :code, :name, :resource_type_id, :properties])
     |> validate_required([:company_id, :code, :name, :resource_type_id, :properties])
+    |> validate_length(:code, max: 64)
+    |> validate_length(:name, max: 255)
     |> unique_constraint([:company_id, :code], name: :factory_resources_company_code_unique)
     |> foreign_key_constraint(:resource_type_id, name: :factory_resources_resource_type_id_fkey)
   end
@@ -86,6 +90,8 @@ defmodule Bilimbi.Factory.ProductDefinition.Schemas.Resource do
     resource
     |> cast(attrs, [:code, :name, :properties])
     |> validate_required([:code, :name, :properties])
+    |> validate_length(:code, max: 64)
+    |> validate_length(:name, max: 255)
     |> unique_constraint([:company_id, :code], name: :factory_resources_company_code_unique)
   end
 end

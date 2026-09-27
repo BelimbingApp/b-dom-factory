@@ -306,6 +306,34 @@ defmodule Bilimbi.Factory.ProductDefinitionTest do
     end
   end
 
+  test "an over-long product or resource code is a changeset error", %{scope: scope} do
+    {:ok, output} = Inventory.create_item(scope, 73, %{sku: "OUT", title: "Out"})
+    {:ok, type} = Definitions.create_resource_type(scope, 73, %{code: "TYPE", name: "Type"})
+    long = String.duplicate("X", 300)
+
+    assert {:error, %Ecto.Changeset{errors: [code: {_, meta}]}} =
+             Definitions.create_product(scope, 73, output.id, %{code: long, name: "Out"})
+
+    assert meta[:count] == 64
+
+    assert {:error, %Ecto.Changeset{errors: [code: {_, meta}]}} =
+             Definitions.create_resource(scope, 73, %{
+               code: long,
+               name: "R",
+               resource_type_id: type.id
+             })
+
+    assert meta[:count] == 64
+
+    {:ok, resource} =
+      Definitions.create_resource(scope, 73, %{code: "R", name: "R", resource_type_id: type.id})
+
+    assert {:error, %Ecto.Changeset{errors: [name: {_, meta}]}} =
+             Definitions.update_resource(scope, 73, resource.id, %{name: long})
+
+    assert meta[:count] == 255
+  end
+
   test "a formula or routing refuses a retired material", %{scope: scope} do
     {:ok, input} = Inventory.create_item(scope, 73, %{sku: "IN", title: "In"})
     {:ok, output} = Inventory.create_item(scope, 73, %{sku: "OUT", title: "Out"})
