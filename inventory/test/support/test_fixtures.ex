@@ -8,12 +8,61 @@ defmodule Bilimbi.Factory.Inventory.TestFixtures do
   module's migrations and schema contract.
   """
 
+  alias Bilimbi.Base.ModuleRegistry.ContributionRegistry
   alias Bilimbi.Base.Repo
+  alias Bilimbi.Base.Settings
+  alias Bilimbi.Base.Settings.ContributionValidator
+  alias Bilimbi.Base.Settings.TestFixtures, as: SettingsTestFixtures
   alias Bilimbi.Core.Company.TestFixtures, as: CompanyTestFixtures
+  alias Bilimbi.Factory.Inventory.Contributions
   alias Ecto.Adapters.SQL
+
+  @doc """
+  Installs a contribution snapshot carrying Inventory's settings definitions,
+  so `Bilimbi.Base.Settings` resolves the item master settings in a
+  module-folder test. Call it from `test_helper.exs`; a test that installs
+  its own snapshot puts it back on exit instead of clearing.
+  """
+  def install_settings_snapshot! do
+    settings =
+      ContributionValidator.validate_contributions!([
+        %{
+          descriptor: %{id: "factory/inventory", otp_app: :bilimbi_factory_inventory},
+          payload: Contributions.contributions().settings
+        }
+      ])
+
+    ContributionRegistry.put_snapshot_for_test!(%{
+      graph_fingerprint: "factory-inventory-test",
+      consumers: %{settings: settings}
+    })
+  end
+
+  @doc """
+  Configures a company's item master settings: the status vocabulary
+  (`:statuses`, default `["draft", "ready", "archived"]` as an example set;
+  `nil` removes the override) and the default currency (`:currency`, default
+  `"USD"`; `nil` removes it).
+  """
+  def configure_item_settings!(company_id, tenant_id, opts \\ []) do
+    opts = Keyword.validate!(opts, statuses: ["draft", "ready", "archived"], currency: "USD")
+    scope = Settings.Scope.company(company_id, tenant_id)
+
+    for {key, value} <- [
+          {Contributions.item_statuses_key(), opts[:statuses]},
+          {Contributions.default_currency_key(), opts[:currency]}
+        ] do
+      if is_nil(value),
+        do: Settings.delete(key, scope),
+        else: {:ok, _value} = Settings.put(key, value, scope)
+    end
+
+    :ok
+  end
 
   def create_inventory_tables! do
     apply(CompanyTestFixtures, :create_company_identity_tables!, [])
+    apply(SettingsTestFixtures, :create_settings_table!, [])
 
     Enum.each(
       [
@@ -61,14 +110,36 @@ defmodule Bilimbi.Factory.Inventory.TestFixtures do
         ) ON COMMIT PRESERVE ROWS
         """,
         """
+        CREATE TEMPORARY TABLE factory_inventory_material_types (
+          id bigserial PRIMARY KEY,
+          company_id bigint NOT NULL REFERENCES companies (id),
+          code varchar(64) NOT NULL,
+          name varchar(255) NOT NULL,
+          property_definitions jsonb[] NOT NULL,
+          created_at timestamp(0) without time zone NOT NULL,
+          updated_at timestamp(0) without time zone NOT NULL,
+          CONSTRAINT factory_inventory_material_types_company_id_code_unique UNIQUE (company_id, code),
+          CONSTRAINT factory_inventory_material_types_id_company_id_unique UNIQUE (id, company_id)
+        ) ON COMMIT PRESERVE ROWS
+        """,
+        """
         CREATE TEMPORARY TABLE factory_inventory_materials (
           id bigserial PRIMARY KEY,
           company_id bigint NOT NULL REFERENCES companies (id),
           item_id bigint NOT NULL REFERENCES commerce_inventory_items (id),
           native_unit_id bigint NOT NULL REFERENCES factory_inventory_units (id),
+          material_type_id bigint,
+          properties jsonb NOT NULL DEFAULT '{}'::jsonb,
           created_at timestamp(0) without time zone NOT NULL,
           updated_at timestamp(0) without time zone NOT NULL,
-          CONSTRAINT factory_inventory_materials_item_id_unique UNIQUE (item_id)
+          CONSTRAINT factory_inventory_materials_item_id_unique UNIQUE (item_id),
+          CONSTRAINT factory_inventory_materials_material_type_id_fkey
+            FOREIGN KEY (material_type_id, company_id)
+            REFERENCES factory_inventory_material_types (id, company_id),
+          CONSTRAINT factory_inventory_materials_properties_shape CHECK (
+            jsonb_typeof(properties) = 'object' AND
+            (material_type_id IS NOT NULL OR properties = '{}'::jsonb)
+          )
         ) ON COMMIT PRESERVE ROWS
         """,
         """
@@ -294,7 +365,8 @@ defmodule Bilimbi.Factory.Inventory.TestFixtures do
   @doc """
   A mill in tenant 41 (company 73, with a sister company 74), and a customer
   tenant 42, with kilogram-native coil, finished, trim, and scrap materials,
-  a coil unit converting to kilograms, and three locations.
+  a coil unit converting to kilograms, and three locations. Both companies
+  have example item settings (`configure_item_settings!/3`).
   """
   def mill! do
     alias Bilimbi.Base.Tenancy
@@ -305,6 +377,8 @@ defmodule Bilimbi.Factory.Inventory.TestFixtures do
     insert_tenant!(%{id: 42, name: "Customer", is_platform_operator: false})
     insert_company!(%{id: 73, tenant_id: 41, name: "Mill", code: "mill"})
     insert_company!(%{id: 74, tenant_id: 41, name: "Sister Mill", code: "sister"})
+    configure_item_settings!(73, 41)
+    configure_item_settings!(74, 41)
 
     {:ok, scope} = Tenancy.scope(41)
     {:ok, customer} = Tenancy.scope(42)

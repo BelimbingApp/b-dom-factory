@@ -1,8 +1,10 @@
 defmodule Bilimbi.Factory.Inventory.CatalogTest do
   use Bilimbi.Base.Database.DataCase, async: true
 
+  alias Bilimbi.Base.Settings
   alias Bilimbi.Base.Tenancy
   alias Bilimbi.Factory.Inventory
+  alias Bilimbi.Factory.Inventory.Contributions
   alias Bilimbi.Factory.Inventory.Item
   alias Bilimbi.Factory.Inventory.Location
   alias Bilimbi.Factory.Inventory.Unit
@@ -16,6 +18,8 @@ defmodule Bilimbi.Factory.Inventory.CatalogTest do
     insert_company!(%{id: 73, tenant_id: 41, name: "Mill", code: "mill"})
     insert_company!(%{id: 74, tenant_id: 41, name: "Sister Mill", code: "sister"})
     insert_company!(%{id: 75, tenant_id: 42, name: "Other", code: "other"})
+    configure_item_settings!(73, 41)
+    configure_item_settings!(74, 41)
 
     {:ok, operator} = Tenancy.scope(41)
     {:ok, customer} = Tenancy.scope(42)
@@ -44,6 +48,81 @@ defmodule Bilimbi.Factory.Inventory.CatalogTest do
 
       assert {:ok, ^item} = Inventory.get_item(scope, 73, item.id)
       assert {:ok, ^item} = Inventory.get_item_by_sku(scope, 73, "al-coil-01")
+    end
+
+    test "takes its status vocabulary and default currency from company settings", %{
+      operator: scope
+    } do
+      assert {:ok, %{statuses: ["draft", "ready", "archived"], default_currency_code: "USD"}} =
+               Inventory.item_settings(scope, 73)
+
+      assert {:ok, %Item{status: "draft", currency_code: "USD"}} =
+               Inventory.create_item(scope, 73, %{sku: "A", title: "A"})
+
+      assert {:ok, %Item{status: "ready", currency_code: "EUR"}} =
+               Inventory.create_item(scope, 73, %{
+                 sku: "B",
+                 title: "B",
+                 status: "ready",
+                 currency_code: "eur"
+               })
+
+      # A tenant-level setting serves a company without its own override.
+      configure_item_settings!(74, 41, statuses: nil, currency: nil)
+
+      {:ok, _} =
+        Settings.put(Contributions.item_statuses_key(), ["new"], Settings.Scope.tenant(41))
+
+      {:ok, _} =
+        Settings.put(Contributions.default_currency_key(), "GBP", Settings.Scope.tenant(41))
+
+      assert {:ok, %{statuses: ["new"], default_currency_code: "GBP"}} =
+               Inventory.item_settings(scope, 74)
+
+      assert {:ok, %Item{status: "new", currency_code: "GBP"}} =
+               Inventory.create_item(scope, 74, %{sku: "C", title: "C"})
+
+      assert {:error, :company_not_found} = Inventory.item_settings(scope, 75)
+    end
+
+    test "without configured settings any status is accepted and both must be given", %{
+      operator: scope
+    } do
+      configure_item_settings!(73, 41, statuses: nil, currency: nil)
+
+      assert {:ok, %{statuses: nil, default_currency_code: nil}} =
+               Inventory.item_settings(scope, 73)
+
+      assert {:error, changeset} = Inventory.create_item(scope, 73, %{sku: "A", title: "A"})
+      assert %{status: [_], currency_code: [_]} = errors_on(changeset)
+
+      assert {:error, changeset} =
+               Inventory.create_item(scope, 73, %{sku: "A", title: "A", status: "  "})
+
+      assert %{status: [_]} = errors_on(changeset)
+
+      assert {:ok, %Item{status: "any_status_the_company_uses", currency_code: "EUR"}} =
+               Inventory.create_item(scope, 73, %{
+                 sku: "A",
+                 title: "A",
+                 status: "any_status_the_company_uses",
+                 currency_code: "EUR"
+               })
+    end
+
+    test "reports a malformed setting where it is read", %{operator: scope} do
+      scope_73 = Settings.Scope.company(73, 41)
+      {:ok, _} = Settings.put(Contributions.item_statuses_key(), ["ok", "ok"], scope_73)
+
+      assert_raise ArgumentError, ~r/item_statuses for company 73/, fn ->
+        Inventory.create_item(scope, 73, %{sku: "A", title: "A"})
+      end
+
+      configure_item_settings!(73, 41, currency: "EURO")
+
+      assert_raise ArgumentError, ~r/default_currency_code for company 73/, fn ->
+        Inventory.item_settings(scope, 73)
+      end
     end
 
     test "refuses an unknown status and a duplicate SKU in the same company", %{operator: scope} do

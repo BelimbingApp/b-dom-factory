@@ -13,7 +13,10 @@
     "factory/inventory"
   ],
   migrations: "priv/repo/migrations",
-  migration_dispositions: %{20_260_926_100_000 => :bilimbi_only},
+  migration_dispositions: %{
+    20_260_926_100_000 => :bilimbi_only,
+    20_260_927_150_000 => :bilimbi_only
+  },
   web: nil,
   schema_contract: nil,
   contribution_provider: nil,

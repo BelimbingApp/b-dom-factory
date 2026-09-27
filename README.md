@@ -8,12 +8,13 @@ Bilimbi checkout; it does not build on its own.
 | Module | Descriptor ID | Owns |
 | --- | --- | --- |
 | [`inventory/`](inventory/docs/README.md) | `factory/inventory` | material facts, the Material Transaction ledger, Lot/Unit Genealogy |
-| [`product_definition/`](product_definition/docs/README.md) | `factory/product_definition` | what is made and how: BOMs, routings, work centres |
+| [`product_definition/`](product_definition/docs/README.md) | `factory/product_definition` | what is made and how: BOMs, routings, company resource types and resources |
 | [`production_execution/`](production_execution/docs/README.md) | `factory/production_execution` | actual work and its Inventory postings; depends on Inventory and Product Definition |
 
-Inventory has its catalog, locations, units, stock positions, Material
-Transaction ledger, lot and unit genealogy, and production posting-authority registry; Product
-Definition has Phase 1 product, Formula/BOM and routing revisions;
+Inventory has its catalog and company item settings, material types,
+locations, units, stock positions, Material Transaction ledger, lot and unit
+genealogy, and production posting-authority registry; Product Definition has
+Phase 1 product, resource type, resource, Formula/BOM and routing revisions;
 Production Execution records orders, batches, actual routed work, and
 material hold overrides with atomic Inventory postings. Their scope
 and phases are in Bilimbi's

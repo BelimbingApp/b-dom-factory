@@ -25,8 +25,19 @@ defmodule Bilimbi.Factory.Inventory.DescriptorTest do
     applications = Application.spec(:bilimbi_factory_inventory, :applications)
 
     assert :bilimbi_core_company in applications
+    assert :bilimbi_base_settings in applications
     refute :bilimbi_factory_production_execution in applications
     refute :bilimbi_factory_product_definition in applications
+  end
+
+  test "declares the item settings as company configuration with no default of its own" do
+    %{settings: %{definitions: definitions}} = Contributions.contributions()
+
+    assert %{type: :array, scopes: [:tenant, :company], default: nil, nullable: true} =
+             Map.new(definitions[Contributions.item_statuses_key()])
+
+    assert %{type: :string, scopes: [:tenant, :company], default: nil, nullable: true} =
+             Map.new(definitions[Contributions.default_currency_key()])
   end
 
   test "declares Belimbing's item master capabilities under their durable keys" do

@@ -21,11 +21,14 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
     {:ok, product} =
       ProductDefinition.create_product(scope, 73, sheet.id, %{code: "SHEET", name: "Sheet"})
 
+    {:ok, resource_type} =
+      ProductDefinition.create_resource_type(scope, 73, %{code: "MACHINE", name: "Machine"})
+
     {:ok, resource} =
       ProductDefinition.create_resource(scope, 73, %{
         code: "SLIT",
         name: "Slitter",
-        kind: "machine"
+        resource_type_id: resource_type.id
       })
 
     formula_attrs = %{

@@ -14,7 +14,8 @@ defmodule Bilimbi.Factory.ProductionExecution.TestFixtures do
   def create_production_tables! do
     for sql <- [
           "CREATE TEMPORARY TABLE factory_products (id bigserial PRIMARY KEY, company_id bigint NOT NULL REFERENCES companies(id), item_id bigint NOT NULL REFERENCES commerce_inventory_items(id), code text NOT NULL, name text NOT NULL, inserted_at timestamp(0) NOT NULL, updated_at timestamp(0) NOT NULL, UNIQUE(company_id, code), UNIQUE(company_id, item_id)) ON COMMIT PRESERVE ROWS",
-          "CREATE TEMPORARY TABLE factory_resources (id bigserial PRIMARY KEY, company_id bigint NOT NULL REFERENCES companies(id), code text NOT NULL, name text NOT NULL, kind text NOT NULL, inserted_at timestamp(0) NOT NULL, updated_at timestamp(0) NOT NULL, UNIQUE(company_id, code)) ON COMMIT PRESERVE ROWS",
+          "CREATE TEMPORARY TABLE factory_resource_types (id bigserial PRIMARY KEY, company_id bigint NOT NULL REFERENCES companies(id), code text NOT NULL, name text NOT NULL, property_definitions jsonb[] NOT NULL, inserted_at timestamp(0) NOT NULL, updated_at timestamp(0) NOT NULL, CONSTRAINT factory_resource_types_company_code_unique UNIQUE (company_id, code), UNIQUE(id, company_id)) ON COMMIT PRESERVE ROWS",
+          "CREATE TEMPORARY TABLE factory_resources (id bigserial PRIMARY KEY, company_id bigint NOT NULL REFERENCES companies(id), code text NOT NULL, name text NOT NULL, resource_type_id bigint NOT NULL, properties jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(properties) = 'object'), inserted_at timestamp(0) NOT NULL, updated_at timestamp(0) NOT NULL, UNIQUE(company_id, code), CONSTRAINT factory_resources_resource_type_id_fkey FOREIGN KEY (resource_type_id, company_id) REFERENCES factory_resource_types (id, company_id)) ON COMMIT PRESERVE ROWS",
           "CREATE TEMPORARY TABLE factory_formula_revisions (id bigserial PRIMARY KEY, company_id bigint NOT NULL REFERENCES companies(id), product_id bigint NOT NULL REFERENCES factory_products(id), version integer NOT NULL, lines jsonb[] NOT NULL, process_config jsonb NOT NULL, inserted_at timestamp(0) NOT NULL, UNIQUE(product_id, version)) ON COMMIT PRESERVE ROWS",
           "CREATE TEMPORARY TABLE factory_routing_revisions (id bigserial PRIMARY KEY, company_id bigint NOT NULL REFERENCES companies(id), product_id bigint NOT NULL REFERENCES factory_products(id), version integer NOT NULL, operations jsonb[] NOT NULL, process_config jsonb NOT NULL, inserted_at timestamp(0) NOT NULL, UNIQUE(product_id, version)) ON COMMIT PRESERVE ROWS",
           "CREATE TEMPORARY TABLE factory_production_orders (id bigserial PRIMARY KEY, company_id bigint NOT NULL REFERENCES companies(id), code text NOT NULL, kind text NOT NULL CHECK (kind IN ('order', 'batch')), product_id bigint NOT NULL REFERENCES factory_products(id), formula_version integer NOT NULL CHECK (formula_version > 0), routing_version integer NOT NULL CHECK (routing_version > 0), demand_ref text, inserted_at timestamp(0) NOT NULL, updated_at timestamp(0) NOT NULL, UNIQUE(company_id, code)) ON COMMIT PRESERVE ROWS",
@@ -74,7 +75,7 @@ defmodule Bilimbi.Factory.ProductionExecution.TestFixtures do
         }
       ])
 
-    snapshot = ContributionRegistry.build!([])
+    snapshot = Bilimbi.Factory.Inventory.TestFixtures.install_settings_snapshot!()
 
     ContributionRegistry.put_snapshot_for_test!(%{
       snapshot
@@ -85,6 +86,8 @@ defmodule Bilimbi.Factory.ProductionExecution.TestFixtures do
           })
     })
 
-    ExUnit.Callbacks.on_exit(&ContributionRegistry.clear_for_test!/0)
+    ExUnit.Callbacks.on_exit(fn ->
+      Bilimbi.Factory.Inventory.TestFixtures.install_settings_snapshot!()
+    end)
   end
 end

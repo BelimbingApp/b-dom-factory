@@ -149,13 +149,16 @@ defmodule Bilimbi.Factory.ProductionExecution.FoamPackScenario do
         }
       })
 
+    {:ok, resource_type} =
+      ProductDefinition.create_resource_type(scope, @company, %{code: "MACHINE", name: "Machine"})
+
     routed =
       for {{code, inputs, outputs}, sequence} <- Enum.with_index(operations, 1) do
         {:ok, resource} =
           ProductDefinition.create_resource(scope, @company, %{
             code: "FP-#{code}",
             name: code,
-            kind: "machine"
+            resource_type_id: resource_type.id
           })
 
         %{

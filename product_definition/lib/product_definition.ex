@@ -1,21 +1,33 @@
 defmodule Bilimbi.Factory.ProductDefinition do
   @moduledoc """
-  Scoped product, immutable Formula/BOM and routing revision contracts.
+  Scoped product, resource type, resource, and immutable Formula/BOM and
+  routing revision contracts.
 
-  Definitions are owned by a company. Revision numbers are assigned under a
-  product lock, and a selection names exact formula and routing versions.
-  Returned values are maps, not persistence schemas. Execution remains the
-  responsibility of Production Execution.
+  Definitions are owned by a company. Resource types and their properties are
+  the company's configuration, validated through
+  `Bilimbi.Factory.Inventory.PropertyDefinition`. Revision numbers are
+  assigned under a product lock, and a selection names exact formula and
+  routing versions. Returned values are maps, not persistence schemas.
+  Execution remains the responsibility of Production Execution.
   """
   import Ecto.Query
   alias Bilimbi.Base.Repo
   alias Bilimbi.Base.Tenancy.Scope
   alias Bilimbi.Core.Company
   alias Bilimbi.Factory.Inventory
-  alias Bilimbi.Factory.ProductDefinition.Schemas.{Formula, Product, Resource, Routing}
+  alias Bilimbi.Factory.Inventory.PropertyDefinition
+
+  alias Bilimbi.Factory.ProductDefinition.Schemas.{
+    Formula,
+    Product,
+    Resource,
+    ResourceType,
+    Routing
+  }
 
   @product_fields [:id, :company_id, :item_id, :code, :name]
-  @resource_fields [:id, :company_id, :code, :name, :kind]
+  @resource_type_fields [:id, :company_id, :code, :name, :property_definitions]
+  @resource_fields [:id, :company_id, :code, :name, :resource_type_id, :properties]
   @formula_fields [:id, :company_id, :product_id, :version, :lines, :process_config]
   @routing_fields [:id, :company_id, :product_id, :version, :operations, :process_config]
 
@@ -37,14 +49,73 @@ defmodule Bilimbi.Factory.ProductDefinition do
     fetch(scope, company_id, Product, product_id, :product_not_found, @product_fields)
   end
 
-  @doc "Defines a physical resource that a logical operation may allow."
-  def create_resource(%Scope{} = scope, company_id, attrs) when is_map(attrs) do
-    with :ok <- live_company(scope, company_id) do
+  @doc """
+  Defines a company resource type from `code` (upper-cased, unique in the
+  company), `name`, and `property_definitions`, validated by
+  `Bilimbi.Factory.Inventory.PropertyDefinition.normalize_definitions/1`
+  (empty for a type with no properties). A type is immutable: its resources
+  hold values against exactly these definitions.
+  """
+  def create_resource_type(%Scope{} = scope, company_id, attrs) when is_map(attrs) do
+    with :ok <- live_company(scope, company_id),
+         {:ok, definitions} <-
+           PropertyDefinition.normalize_definitions(value(attrs, :property_definitions, [])) do
       attrs = %{
         company_id: company_id,
         code: value(attrs, :code),
         name: value(attrs, :name),
-        kind: value(attrs, :kind)
+        property_definitions: definitions
+      }
+
+      insert(ResourceType.changeset(attrs), @resource_type_fields)
+    end
+  end
+
+  def get_resource_type(%Scope{} = scope, company_id, resource_type_id) do
+    fetch(
+      scope,
+      company_id,
+      ResourceType,
+      resource_type_id,
+      :resource_type_not_found,
+      @resource_type_fields
+    )
+  end
+
+  @doc "Lists a company's resource types ordered by code."
+  def list_resource_types(%Scope{} = scope, company_id) do
+    with :ok <- live_company(scope, company_id) do
+      types =
+        from(t in ResourceType, where: t.company_id == ^company_id, order_by: [asc: t.code])
+        |> Repo.all()
+        |> Enum.map(&Map.take(&1, @resource_type_fields))
+
+      {:ok, types}
+    end
+  end
+
+  @doc """
+  Defines a physical resource that a logical operation may allow: `code`,
+  `name`, the company's `resource_type_id`, and `properties`, its values for
+  that type's definitions
+  (`Bilimbi.Factory.Inventory.PropertyDefinition.validate_values/2`). A type
+  of another company is `{:error, :resource_type_not_found}`; values the type
+  does not define, a missing required value, or a value of the wrong type are
+  `{:error, :invalid_properties}`.
+  """
+  def create_resource(%Scope{} = scope, company_id, attrs) when is_map(attrs) do
+    with {:ok, type} <- get_resource_type(scope, company_id, value(attrs, :resource_type_id)),
+         {:ok, properties} <-
+           PropertyDefinition.validate_values(
+             type.property_definitions,
+             value(attrs, :properties, %{})
+           ) do
+      attrs = %{
+        company_id: company_id,
+        code: value(attrs, :code),
+        name: value(attrs, :name),
+        resource_type_id: type.id,
+        properties: properties
       }
 
       insert(Resource.changeset(attrs), @resource_fields)

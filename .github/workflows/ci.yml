@@ -64,6 +64,10 @@ jobs:
         working-directory: factory
         run: .github/scripts/unique_migration_versions.sh
 
+      - name: Verify configurable concepts stay data, not code constants
+        working-directory: factory
+        run: .github/scripts/configurable_concepts.sh
+
       - name: Read the pinned Bilimbi revision
         id: pin
         working-directory: .

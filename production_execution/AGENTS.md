@@ -11,6 +11,10 @@
   `test/support/test_fixtures.ex`'s `create_production_tables!/0` after
   Inventory's `mill!/0`; mirror migration constraints there when persistence
   changes, rather than creating tables in a test file.
+- A resource belongs to a company resource type
+  (`ProductDefinition.create_resource_type/3`); a fixture creates one type
+  once and passes its `resource_type_id`, and the type's code is fixture
+  data, not a code constant.
 - Use Inventory's public `trace_backward/3`, `trace_forward/3`, and
   `list_identity_draws/3` for material ancestry and use, then join execution
   context by transaction ID as `lib/production_execution/trace.ex` does;

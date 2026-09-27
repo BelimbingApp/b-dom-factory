@@ -1,9 +1,10 @@
 defmodule Bilimbi.Factory.Inventory do
   @moduledoc """
-  Factory Inventory's public API: the item master, units of measure, stock
-  locations, material identity, item-level unit conversions, the Material
-  Transaction ledger, the production posting-authority registry, stock
-  positions, and lot or unit genealogy.
+  Factory Inventory's public API: the item master and its company settings,
+  units of measure, stock locations, material types, material identity,
+  item-level unit conversions, the Material Transaction ledger, the
+  production posting-authority registry, stock positions, and lot or unit
+  genealogy.
 
   Every operation takes a `Bilimbi.Base.Tenancy.Scope` and a company ID. The
   company must be live and inside the scope's tenant; a missing, deleted, or
@@ -19,9 +20,11 @@ defmodule Bilimbi.Factory.Inventory do
   import Ecto.Query
 
   alias Bilimbi.Base.Repo
+  alias Bilimbi.Base.Settings
   alias Bilimbi.Base.Tenancy.Scope
   alias Bilimbi.Core.Company
   alias Bilimbi.Factory.Inventory.Balance
+  alias Bilimbi.Factory.Inventory.Contributions
   alias Bilimbi.Factory.Inventory.Conversion
   alias Bilimbi.Factory.Inventory.Genealogy
   alias Bilimbi.Factory.Inventory.Identity
@@ -29,7 +32,9 @@ defmodule Bilimbi.Factory.Inventory do
   alias Bilimbi.Factory.Inventory.Ledger
   alias Bilimbi.Factory.Inventory.Location
   alias Bilimbi.Factory.Inventory.Material
+  alias Bilimbi.Factory.Inventory.MaterialType
   alias Bilimbi.Factory.Inventory.PostingAuthority
+  alias Bilimbi.Factory.Inventory.PropertyDefinition
   alias Bilimbi.Factory.Inventory.Schemas
   alias Bilimbi.Factory.Inventory.StockPosition
   alias Bilimbi.Factory.Inventory.Transaction
@@ -44,6 +49,7 @@ defmodule Bilimbi.Factory.Inventory do
           | :unit_not_found
           | :location_not_found
           | :material_not_found
+          | :material_type_not_found
           | :conversion_not_found
           | :identity_not_found
 
@@ -54,9 +60,27 @@ defmodule Bilimbi.Factory.Inventory do
   # Item master
   # ============================================================================
 
-  @doc "Statuses an item master row may hold, as Belimbing defines them."
-  @spec item_statuses() :: [String.t()]
-  def item_statuses, do: Schemas.Item.statuses()
+  @doc """
+  The company's item master settings, resolved through Base Settings for the
+  company, then its tenant.
+
+    * `statuses` — the status vocabulary
+      (`#{Contributions.item_statuses_key()}`), an ordered list whose first
+      entry is the default status, or `nil` when the company has not
+      configured one and any non-blank status is accepted.
+    * `default_currency_code` — the currency an item takes when none is
+      given (`#{Contributions.default_currency_key()}`), or `nil`.
+
+  Inventory holds no vocabulary or currency of its own; both are the
+  company's configuration.
+  """
+  @spec item_settings(Scope.t(), pos_integer()) ::
+          {:ok, Schemas.Item.settings()} | {:error, :company_not_found}
+  def item_settings(%Scope{} = scope, company_id) do
+    with {:ok, company} <- live_company_summary(scope, company_id) do
+      {:ok, item_settings_of(company)}
+    end
+  end
 
   @doc """
   Lists a company's items ordered by SKU.
@@ -108,18 +132,24 @@ defmodule Bilimbi.Factory.Inventory do
   end
 
   @doc """
-  Creates an item master row with Belimbing's create rules.
+  Creates an item master row with Belimbing's create rules and the company's
+  item settings (`item_settings/2`).
 
   Accepts `sku`, `title`, `status`, `description`, `quantity_on_hand`,
   `storage_location`, `notes`, `unit_cost_amount`, `target_price_amount` (minor
-  units), and `currency_code`. Catalog references are not accepted: Inventory
-  cannot validate a catalog it does not own.
+  units), and `currency_code`. An omitted `status` is the configured
+  vocabulary's first entry; an omitted `currency_code` is the configured
+  default. Without the setting, the value is required. Catalog references
+  are not accepted: Inventory cannot validate a catalog it does not own.
   """
   @spec create_item(Scope.t(), pos_integer(), map()) ::
           {:ok, Item.t()} | {:error, :company_not_found | Ecto.Changeset.t()}
   def create_item(%Scope{} = scope, company_id, attributes) when is_map(attributes) do
-    with :ok <- live_company(scope, company_id),
-         {:ok, item} <- company_id |> Schemas.Item.creation_changeset(attributes) |> Repo.insert() do
+    with {:ok, company} <- live_company_summary(scope, company_id),
+         {:ok, item} <-
+           company_id
+           |> Schemas.Item.creation_changeset(attributes, item_settings_of(company))
+           |> Repo.insert() do
       {:ok, Item.from_schema(item)}
     end
   end
@@ -212,6 +242,64 @@ defmodule Bilimbi.Factory.Inventory do
   end
 
   # ============================================================================
+  # Material types
+  # ============================================================================
+
+  @doc """
+  Defines a company material type from `code` (upper-cased, unique in the
+  company), `name`, and `property_definitions`, a list validated by
+  `Bilimbi.Factory.Inventory.PropertyDefinition.normalize_definitions/1`
+  (empty for a type with no properties). A type is immutable: the materials
+  registered under it hold values against exactly these definitions.
+  """
+  @spec create_material_type(Scope.t(), pos_integer(), map()) ::
+          {:ok, MaterialType.t()}
+          | {:error, :company_not_found | :invalid_property_definitions | Ecto.Changeset.t()}
+  def create_material_type(%Scope{} = scope, company_id, attributes) when is_map(attributes) do
+    with :ok <- live_company(scope, company_id),
+         {:ok, definitions} <-
+           PropertyDefinition.normalize_definitions(
+             attribute(attributes, :property_definitions, [])
+           ),
+         {:ok, type} <-
+           company_id
+           |> Schemas.MaterialType.creation_changeset(attributes, definitions)
+           |> Repo.insert() do
+      {:ok, MaterialType.from_schema(type)}
+    end
+  end
+
+  @spec get_material_type(Scope.t(), pos_integer(), pos_integer()) ::
+          {:ok, MaterialType.t()} | {:error, :company_not_found | :material_type_not_found}
+  def get_material_type(%Scope{} = scope, company_id, material_type_id) do
+    with :ok <- live_company(scope, company_id),
+         {:ok, type} <-
+           fetch(Schemas.MaterialType, company_id, material_type_id, :material_type_not_found) do
+      {:ok, MaterialType.from_schema(type)}
+    end
+  end
+
+  @doc "Lists a company's material types ordered by code, capped by `:limit`."
+  @spec list_material_types(Scope.t(), pos_integer(), keyword()) ::
+          {:ok, [MaterialType.t()]} | {:error, :company_not_found}
+  def list_material_types(%Scope{} = scope, company_id, opts \\ []) do
+    opts = Keyword.validate!(opts, limit: @default_limit)
+
+    with :ok <- live_company(scope, company_id) do
+      types =
+        from(type in Schemas.MaterialType,
+          where: type.company_id == ^company_id,
+          order_by: [asc: type.code],
+          limit: ^limit!(opts[:limit])
+        )
+        |> Repo.all()
+        |> Enum.map(&MaterialType.from_schema/1)
+
+      {:ok, types}
+    end
+  end
+
+  # ============================================================================
   # Material identity and conversions
   # ============================================================================
 
@@ -220,17 +308,37 @@ defmodule Bilimbi.Factory.Inventory do
 
   An item is registered once. Its native unit never changes, because every
   quantity recorded for it is in that unit.
+
+  Options: `:material_type_id` gives the material one of the company's types,
+  and `:properties` its values for that type's definitions, validated by
+  `Bilimbi.Factory.Inventory.PropertyDefinition.validate_values/2`; a
+  material without a type holds none. A type of another company is
+  `{:error, :material_type_not_found}`; values the type does not define, a
+  missing required value, or a value of the wrong type are
+  `{:error, :invalid_properties}`.
   """
-  @spec register_material(Scope.t(), pos_integer(), pos_integer(), pos_integer()) ::
+  @spec register_material(Scope.t(), pos_integer(), pos_integer(), pos_integer(), keyword()) ::
           {:ok, Material.t()}
-          | {:error, :company_not_found | :item_not_found | :unit_not_found | Ecto.Changeset.t()}
-  def register_material(%Scope{} = scope, company_id, item_id, native_unit_id) do
+          | {:error,
+             :company_not_found
+             | :item_not_found
+             | :unit_not_found
+             | :material_type_not_found
+             | :invalid_properties
+             | Ecto.Changeset.t()}
+  def register_material(%Scope{} = scope, company_id, item_id, native_unit_id, opts \\ []) do
+    opts = Keyword.validate!(opts, material_type_id: nil, properties: nil)
+
     with :ok <- live_company(scope, company_id),
          {:ok, item} <- fetch(Schemas.Item, company_id, item_id, :item_not_found),
          {:ok, unit} <- fetch(Schemas.Unit, company_id, native_unit_id, :unit_not_found),
-         {:ok, _material} <-
-           company_id |> Schemas.Material.creation_changeset(item.id, unit.id) |> Repo.insert() do
-      {:ok, material(company_id, item, unit)}
+         {:ok, type_id, properties} <-
+           typed_properties(company_id, opts[:material_type_id], opts[:properties]),
+         {:ok, material} <-
+           company_id
+           |> Schemas.Material.creation_changeset(item.id, unit.id, type_id, properties)
+           |> Repo.insert() do
+      {:ok, material(company_id, item, material, unit)}
     end
   end
 
@@ -239,8 +347,8 @@ defmodule Bilimbi.Factory.Inventory do
           | {:error, :company_not_found | :item_not_found | :material_not_found}
   def get_material(%Scope{} = scope, company_id, item_id) do
     with :ok <- live_company(scope, company_id),
-         {:ok, item, _material, unit} <- fetch_material(company_id, item_id) do
-      {:ok, material(company_id, item, unit)}
+         {:ok, item, material, unit} <- fetch_material(company_id, item_id) do
+      {:ok, material(company_id, item, material, unit)}
     end
   end
 
@@ -588,11 +696,59 @@ defmodule Bilimbi.Factory.Inventory do
   end
 
   defp live_company(scope, company_id) do
+    with {:ok, _company} <- live_company_summary(scope, company_id), do: :ok
+  end
+
+  defp live_company_summary(scope, company_id) do
     case Company.get_company(scope, company_id) do
-      {:ok, _company} -> :ok
+      {:ok, company} -> {:ok, company}
       {:error, :not_found} -> {:error, :company_not_found}
     end
   end
+
+  # A malformed override is an administration error, reported where it is
+  # read rather than turned into a refused item.
+  defp item_settings_of(company) do
+    scope = Settings.Scope.company(company.id, company.tenant_id)
+    statuses = Settings.get(Contributions.item_statuses_key(), scope)
+    currency = Settings.get(Contributions.default_currency_key(), scope)
+
+    unless is_nil(statuses) or
+             (is_list(statuses) and statuses != [] and
+                Enum.all?(statuses, &(is_binary(&1) and String.trim(&1) != "")) and
+                statuses == Enum.uniq(statuses)) do
+      raise ArgumentError,
+            "#{Contributions.item_statuses_key()} for company #{company.id} must be a " <>
+              "non-empty list of distinct non-blank statuses, got: #{inspect(statuses)}"
+    end
+
+    unless is_nil(currency) or (is_binary(currency) and String.length(String.trim(currency)) == 3) do
+      raise ArgumentError,
+            "#{Contributions.default_currency_key()} for company #{company.id} must be a " <>
+              "three-letter code, got: #{inspect(currency)}"
+    end
+
+    %{statuses: statuses, default_currency_code: currency}
+  end
+
+  defp typed_properties(_company_id, nil, properties) do
+    case PropertyDefinition.validate_values([], properties) do
+      {:ok, none} -> {:ok, nil, none}
+      error -> error
+    end
+  end
+
+  defp typed_properties(company_id, material_type_id, properties) do
+    with {:ok, type} <-
+           fetch(Schemas.MaterialType, company_id, material_type_id, :material_type_not_found),
+         {:ok, values} <-
+           PropertyDefinition.validate_values(type.property_definitions, properties) do
+      {:ok, type.id, values}
+    end
+  end
+
+  defp attribute(map, key, default),
+    do: Map.get(map, key, Map.get(map, Atom.to_string(key), default))
 
   defp fetch(schema, company_id, id, error) when is_integer(id) and id > 0 do
     case Repo.get_by(schema, id: id, company_id: company_id) do
@@ -701,12 +857,14 @@ defmodule Bilimbi.Factory.Inventory do
   defp fetch_conversion(_company_id, _item_id, _unit_id, _version),
     do: {:error, :conversion_not_found}
 
-  defp material(company_id, item, native_unit) do
+  defp material(company_id, item, material, native_unit) do
     %Material{
       item_id: item.id,
       company_id: company_id,
       sku: item.sku,
-      native_unit: Unit.from_schema(native_unit)
+      native_unit: Unit.from_schema(native_unit),
+      material_type_id: material.material_type_id,
+      properties: material.properties
     }
   end
 

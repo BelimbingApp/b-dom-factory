@@ -5,6 +5,7 @@ defmodule Bilimbi.Factory.Inventory.MaterialTest do
   alias Bilimbi.Factory.Inventory
   alias Bilimbi.Factory.Inventory.Conversion
   alias Bilimbi.Factory.Inventory.Material
+  alias Bilimbi.Factory.Inventory.MaterialType
   alias Bilimbi.Factory.Inventory.StockPosition
 
   import Bilimbi.Factory.Inventory.TestFixtures
@@ -15,6 +16,8 @@ defmodule Bilimbi.Factory.Inventory.MaterialTest do
     insert_tenant!(%{id: 42, name: "Customer", is_platform_operator: false})
     insert_company!(%{id: 73, tenant_id: 41, name: "Mill", code: "mill"})
     insert_company!(%{id: 74, tenant_id: 41, name: "Sister Mill", code: "sister"})
+    configure_item_settings!(73, 41)
+    configure_item_settings!(74, 41)
 
     {:ok, scope} = Tenancy.scope(41)
     {:ok, customer} = Tenancy.scope(42)
@@ -57,6 +60,152 @@ defmodule Bilimbi.Factory.Inventory.MaterialTest do
                Inventory.register_material(scope, 73, sister_item.id, kg.id)
 
       assert {:error, :item_not_found} = Inventory.get_material(scope, 74, item.id)
+    end
+  end
+
+  describe "material types" do
+    @definitions [
+      %{key: "thickness", label: "Thickness", value_type: "decimal", unit: "mm", required: true},
+      %{key: "grade", label: "Grade", value_type: "string"},
+      %{key: "layers", label: "Layers", value_type: "integer", required: false},
+      %{key: "coated", label: "Coated", value_type: "boolean"}
+    ]
+
+    test "defines a company type and registers a material with validated values", context do
+      %{scope: scope, item: item, kg: kg} = context
+
+      assert {:ok, %MaterialType{code: "SHEET", property_definitions: definitions} = type} =
+               Inventory.create_material_type(scope, 73, %{
+                 code: " sheet ",
+                 name: "Sheet stock",
+                 property_definitions: @definitions
+               })
+
+      assert Enum.map(definitions, &{&1["key"], &1["value_type"], &1["unit"], &1["required"]}) ==
+               [
+                 {"thickness", "decimal", "mm", true},
+                 {"grade", "string", nil, false},
+                 {"layers", "integer", nil, false},
+                 {"coated", "boolean", nil, false}
+               ]
+
+      assert {:ok, ^type} = Inventory.get_material_type(scope, 73, type.id)
+
+      {:ok, plain} =
+        Inventory.create_material_type(scope, 73, %{code: "BULK", name: "Bulk stock"})
+
+      assert plain.property_definitions == []
+      assert {:ok, [^plain, ^type]} = Inventory.list_material_types(scope, 73)
+
+      assert {:ok, %Material{material_type_id: type_id, properties: properties} = material} =
+               Inventory.register_material(scope, 73, item.id, kg.id,
+                 material_type_id: type.id,
+                 properties: %{"thickness" => "0.50", "grade" => " A1 ", "coated" => true}
+               )
+
+      assert type_id == type.id
+      assert properties == %{"thickness" => "0.50", "grade" => "A1", "coated" => true}
+      assert {:ok, ^material} = Inventory.get_material(scope, 73, item.id)
+    end
+
+    test "refuses values the type does not define, missing required, and wrong types", context do
+      %{scope: scope, item: item, kg: kg} = context
+
+      {:ok, type} =
+        Inventory.create_material_type(scope, 73, %{
+          code: "SHEET",
+          name: "Sheet stock",
+          property_definitions: @definitions
+        })
+
+      for properties <- [
+            %{},
+            %{"thickness" => "0.5", "colour" => "blue"},
+            %{"thickness" => "thin"},
+            %{"thickness" => 0.5},
+            %{"thickness" => "1", "layers" => "3"},
+            %{"thickness" => "1", "coated" => "yes"},
+            %{"thickness" => "1", "grade" => ""},
+            "not a map"
+          ] do
+        assert {:error, :invalid_properties} =
+                 Inventory.register_material(scope, 73, item.id, kg.id,
+                   material_type_id: type.id,
+                   properties: properties
+                 )
+      end
+
+      assert {:error, :invalid_properties} =
+               Inventory.register_material(scope, 73, item.id, kg.id,
+                 properties: %{"thickness" => "1"}
+               )
+
+      assert {:error, :material_not_found} = Inventory.get_material(scope, 73, item.id)
+
+      assert {:ok, %Material{material_type_id: nil, properties: %{}}} =
+               Inventory.register_material(scope, 73, item.id, kg.id)
+    end
+
+    test "refuses malformed definitions and a duplicate code", %{scope: scope} do
+      for definitions <- [
+            [%{key: "Thickness", label: "T", value_type: "decimal"}],
+            [%{key: "thickness", label: "", value_type: "decimal"}],
+            [%{key: "thickness", label: "T", value_type: "float"}],
+            [%{key: "grade", label: "G", value_type: "string", unit: "mm"}],
+            [%{key: "grade", label: "G", value_type: "string", required: "yes"}],
+            [
+              %{key: "a", label: "A", value_type: "string"},
+              %{key: "a", label: "B", value_type: "string"}
+            ],
+            ["thickness"],
+            %{key: "thickness"}
+          ] do
+        assert {:error, :invalid_property_definitions} =
+                 Inventory.create_material_type(scope, 73, %{
+                   code: "T",
+                   name: "T",
+                   property_definitions: definitions
+                 })
+      end
+
+      assert {:ok, _} = Inventory.create_material_type(scope, 73, %{code: "T", name: "T"})
+
+      assert {:error, changeset} =
+               Inventory.create_material_type(scope, 73, %{code: "t", name: "T"})
+
+      assert %{code: [_]} = Ecto.Changeset.traverse_errors(changeset, &elem(&1, 0))
+      assert {:ok, _} = Inventory.create_material_type(scope, 74, %{code: "T", name: "T"})
+    end
+
+    test "keeps types inside their company and tenant", context do
+      %{scope: scope, customer: customer, item: item, kg: kg} = context
+      {:ok, type} = Inventory.create_material_type(scope, 74, %{code: "T", name: "T"})
+
+      assert {:error, :material_type_not_found} = Inventory.get_material_type(scope, 73, type.id)
+      assert {:ok, []} = Inventory.list_material_types(scope, 73)
+      assert {:error, :company_not_found} = Inventory.get_material_type(customer, 74, type.id)
+      assert {:error, :company_not_found} = Inventory.list_material_types(customer, 74)
+
+      assert {:error, :company_not_found} =
+               Inventory.create_material_type(customer, 73, %{code: "X", name: "X"})
+
+      assert {:error, :material_type_not_found} =
+               Inventory.register_material(scope, 73, item.id, kg.id, material_type_id: type.id)
+
+      # The composite reference refuses what the API never writes.
+      assert_raise Postgrex.Error, ~r/material_type_id_fkey/, fn ->
+        Repo.query!(
+          "INSERT INTO factory_inventory_materials (company_id, item_id, native_unit_id, material_type_id, properties, created_at, updated_at) VALUES ($1, $2, $3, $4, '{}', now(), now())",
+          [73, item.id, kg.id, type.id]
+        )
+      end
+
+      assert_raise Postgrex.Error, ~r/properties_shape/, fn ->
+        Repo.query!(
+          "INSERT INTO factory_inventory_materials (company_id, item_id, native_unit_id, properties, created_at, updated_at) VALUES ($1, $2, $3, '{\"a\": 1}', now(), now())",
+          [73, item.id, kg.id]
+        )
+      end
     end
   end
 
