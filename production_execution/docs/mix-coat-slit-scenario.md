@@ -39,19 +39,20 @@ identities, people, and provenance.
   opaque source extract reference `SNAPSHOT-1`; receipt at 32 days ago, wet
   mixing at 30 days ago, drying at 29 days ago, and 10 minute run durations.
 - Coating order `PO-COAT-1`, line `COATER-A`, `COAT` operation, live request
-  `COAT-1` two days ago: 500 m2 film plus 80 kg dry glue, 500 m2 good coated
-  output `COATED-ROLL-1` at a nominal 1200 mm. Area balances exactly; the
-  80 kg of glue is a variance in kilograms whose evidence says it was applied
-  to the film and not weighed on the roll. Through the conversions, the
-  cross-unit mass balance reads 130 kg in, 125 kg out, 5 kg apart, recorded by
-  no entry. The example yield is 125/130 by mass; this is not a validated
+  `COAT-1` two days ago: film weighed at 50 kg (500 m2) plus 80 kg dry glue,
+  good coated output `COATED-ROLL-1` at a nominal 1200 mm weighed at 125 kg
+  (500 m2). Area balances exactly; the 80 kg of glue is a variance in
+  kilograms whose evidence says it was applied to the film, which the coated
+  roll stocks by area. The weighed quantities give a cross-unit mass balance
+  of 130 kg in, 125 kg out, 5 kg apart, recorded by no entry and unchanged by
+  a later conversion version. The example yield is 125/130 by mass; this is not a validated
   coating KPI.
 - Slitting order `PO-SLIT-1`, resource `SLITTER-A`, live request `SLIT-1` one
   day ago: the 500 m2 coated roll feeds 250 m2 `SLIT-600-1` at a measured
   600 mm and 125 m2 `SLIT-300-1` at a measured 300 mm, 120 m2 derived
   `TRIM-1` for the remaining illustrative 300 mm, 3 kg measured `WASTE-1`, a
   5 m2 variance in area, and a 3 kg variance in mass because only the waste is
-  weighed. Slit rolls and trim have no conversion, so the run has no
+  weighed. Slit rolls and trim are measured by area only, so the run has no
   cross-unit balance. Good output is 375/500 by area in this example.
 - Operator, helper, machine codes, synthetic scale and run sheets, and a
   `quality:pending` token are sample evidence only. Energy, labour hours,
@@ -84,9 +85,9 @@ identities, people, and provenance.
   Physical measurement and KPI policy still need plant confirmation.
 - Mixed native units in one execution are represented per unit: Inventory
   balances each native unit on its own, records a provenance-backed variance
-  per unit, and reads a cross-unit balance only where every line has an
-  explicit item-level conversion (`Inventory.get_transaction_balance/3`,
-  carried on the run yield as `cross_unit`). The scenario's area-to-mass
+  per unit, and reads a cross-unit balance only in a unit every line was
+  posted in (`Inventory.get_transaction_balance/3`, carried on the run yield
+  as `cross_unit`). The scenario's area-to-mass
   conversions are stand-ins; which source units (m2, linear metres, rolls, kg)
   and factors apply per item is the importing Extension's mapping to confirm.
 - The pending Quality token is an opaque reference, not a quality result. A

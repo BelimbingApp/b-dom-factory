@@ -94,12 +94,14 @@ do not account for. The `record_*` docs on the facade define each request.
   corrections: `per_unit` gives each native unit's observed input, output,
   difference, and recorded variance. Accounting balance is separate from
   measurement agreement: `cross_unit` compares inputs and outputs across
-  units only in a native unit that every line has an explicit item-level
-  conversion to (or is native in), using each item's current version and
-  naming it, so the film's and the coated roll's conversions to kilograms
-  give a mass balance that the glue's kilograms enter as recorded. A unit
-  some item has no conversion to has no cross-unit balance; nothing is
-  assumed, and no entry records a cross-unit difference.
+  units only in a native unit that every line was posted in, natively or as
+  its recorded unit. A recorded line counts at its recorded quantity, and
+  the conversion version it was posted through is named, so film and a
+  coated roll recorded in kilograms give a mass balance that the glue's
+  kilograms enter as recorded. Nothing is converted at read time: a later
+  conversion version never restates a posted balance, and a unit some line
+  was not posted in has no cross-unit balance. No entry records a
+  cross-unit difference.
 
 ## Lot and unit identities
 
@@ -177,7 +179,7 @@ These tests hold Inventory's Phase 4 claims:
 | An Extension cannot register (its declaration fails Inventory's boot) or post production context | `test/posting_authority_test.exs` |
 | Production Execution is the declared authority, and its postings carry actual inputs and outputs, opaque context, and the execution's evidence atomically | `test/posting_boundary_test.exs` (compiled graph), `production_execution/test/execution_test.exs`, `production_execution/test/workflow_test.exs` |
 | Distinct factory workflows (a foam extrude-cure-laminate-cut chain, coil slitting, and a coating-and-slitting chain mixing area, mass, and counted rolls) reconcile from Inventory transactions without changing earlier history | `production_execution/test/workflow_test.exs` |
-| A transform balances per native unit with a variance per unit, and a cross-unit balance exists only where every line has an explicit conversion | `test/transform_test.exs`, `production_execution/test/sbg_scenario_test.exs` |
+| A transform balances per native unit with a variance per unit, and a cross-unit balance exists only in a unit every line was posted in | `test/transform_test.exs`, `production_execution/test/sbg_scenario_test.exs` |
 
 The workflows are test fixtures only; Inventory holds no process rule or
 source mapping for either.

@@ -416,7 +416,7 @@ defmodule Bilimbi.Factory.Inventory.TransformTest do
                Inventory.record_transform(scope, 73, coating, TestPostingAuthority)
     end
 
-    test "a cross-unit balance exists only where every line has an explicit conversion",
+    test "a cross-unit balance exists only in a unit every line was posted in",
          %{scope: scope, kg: kg, m2: m2, items: items, coating: coating} do
       assert {:ok, transform} =
                Inventory.record_transform(scope, 73, coating, TestPostingAuthority)
@@ -435,23 +435,42 @@ defmodule Bilimbi.Factory.Inventory.TransformTest do
         assert Decimal.eq?(group.variance, difference)
       end
 
-      # Without a conversion for every item, no cross-unit balance is assumed.
       assert balance.cross_unit == []
 
-      {:ok, film_kg} = Inventory.define_conversion(scope, 73, items["FILM"].id, kg.id, "10")
+      # Film and the coated roll were recorded by area, so conversions
+      # defined afterwards convert nothing already posted.
+      {:ok, _} = Inventory.define_conversion(scope, 73, items["FILM"].id, kg.id, "10")
+      {:ok, _} = Inventory.define_conversion(scope, 73, items["COATED"].id, kg.id, "3.5")
 
       assert {:ok, %Balance{cross_unit: []}} =
                Inventory.get_transaction_balance(scope, 73, transform.id)
+    end
 
+    test "a weighed coating reads a mass balance that a later conversion version does not restate",
+         %{scope: scope, kg: kg, m2: m2, items: items, coating: coating} do
+      {:ok, film_kg} = Inventory.define_conversion(scope, 73, items["FILM"].id, kg.id, "10")
       {:ok, coated_kg} = Inventory.define_conversion(scope, 73, items["COATED"].id, kg.id, "3.5")
 
-      # 1 kg of film is 10 m2 and 1 kg of coated film is 3.5 m2: 10 kg of
-      # film and 20 kg of glue went in, 28 kg came out, and 2 kg is the
-      # measurement disagreement in mass. Glue has no conversion to area, so
-      # there is no balance in m2.
-      assert {:ok, %Balance{cross_unit: [mass_balance]}} =
+      [film, glue] = coating.inputs
+      [coated] = coating.outputs
+
+      weighed = %{
+        coating
+        | inputs: [%{film | quantity: 10} |> Map.put(:unit_id, kg.id), glue],
+          outputs: [%{coated | quantity: 28} |> Map.put(:unit_id, kg.id)]
+      }
+
+      assert {:ok, transform} =
+               Inventory.record_transform(scope, 73, weighed, TestPostingAuthority)
+
+      # 10 kg of film is 100 m2 and 28 kg of coated film is 98 m2, so area
+      # balances per unit as before. In mass, 10 kg of film and 20 kg of glue
+      # went in and 28 kg came out, as weighed: 2 kg of measurement
+      # disagreement. Glue was not recorded by area, so there is no m2 one.
+      assert {:ok, %Balance{per_unit: [area, _mass], cross_unit: [mass_balance]} = balance} =
                Inventory.get_transaction_balance(scope, 73, transform.id)
 
+      assert area.unit == m2 and Decimal.eq?(area.difference, 2)
       assert mass_balance.unit == kg
       assert Decimal.eq?(mass_balance.input, 30)
       assert Decimal.eq?(mass_balance.output, 28)
@@ -474,18 +493,11 @@ defmodule Bilimbi.Factory.Inventory.TransformTest do
                ]
                |> Enum.sort_by(& &1.item_id)
 
-      # A newer conversion version is the one used, and named.
-      {:ok, film_kg2} = Inventory.define_conversion(scope, 73, items["FILM"].id, kg.id, "5")
+      # A newer version applies to later postings only.
+      {:ok, _} = Inventory.define_conversion(scope, 73, items["FILM"].id, kg.id, "5")
+      {:ok, _} = Inventory.define_conversion(scope, 73, items["COATED"].id, kg.id, "4")
 
-      assert {:ok, %Balance{cross_unit: [revised]}} =
-               Inventory.get_transaction_balance(scope, 73, transform.id)
-
-      assert Decimal.eq?(revised.input, 40)
-
-      assert Enum.any?(
-               revised.conversions,
-               &(&1.conversion_id == film_kg2.id and &1.version == 2)
-             )
+      assert {:ok, ^balance} = Inventory.get_transaction_balance(scope, 73, transform.id)
     end
 
     test "slitting one counted jumbo into counted rolls and weighed trim has a variance per unit",

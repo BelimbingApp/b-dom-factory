@@ -515,8 +515,9 @@ defmodule Bilimbi.Factory.Inventory do
   `per_unit` balances each native unit on its own: observed input, output,
   their difference, and the variance the transaction recorded in that unit.
   `cross_unit` compares inputs and outputs across units only in a native unit
-  that every line has an explicit item-level conversion to (or is native in),
-  naming each conversion version used; see `Bilimbi.Factory.Inventory.Balance`.
+  that every line was posted in, natively or as its recorded unit, naming the
+  conversion version each recorded line was posted through; see
+  `Bilimbi.Factory.Inventory.Balance`.
   """
   @spec get_transaction_balance(Scope.t(), pos_integer(), pos_integer()) ::
           {:ok, Balance.t()} | {:error, :company_not_found | :transaction_not_found}

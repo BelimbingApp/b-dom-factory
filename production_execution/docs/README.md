@@ -90,8 +90,9 @@ transaction: one group per native unit, each with that unit, input, product,
 trim, waste, and signed variance. A single-unit run has one group; a run that
 mixes kilograms and litres has two, and quantities are never converted between
 units. `cross_unit` is Inventory's `get_transaction_balance/3` agreement
-across units: present only in a unit every line has an explicit item-level
-conversion to, naming the conversion versions used, and empty otherwise.
+across units: present only in a unit every line was posted in, natively or
+as its recorded unit, naming the conversion versions the lines were posted
+through, and empty otherwise; a later conversion version does not change it.
 Product includes output roles other than `trim` and `waste`. Each
 correction of the run's transaction, and each correction of those corrections
 (`Inventory.list_corrections/3`), nets into the side of the run entry it adjusts,

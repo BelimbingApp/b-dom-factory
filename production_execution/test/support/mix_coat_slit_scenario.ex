@@ -38,9 +38,9 @@ defmodule Bilimbi.Factory.ProductionExecution.MixCoatSlitScenario do
       end
 
     # Representative area-to-mass conversions for the film and the coated
-    # roll only: 1 kg of film is 10 m2 and 1 kg of coated film is 4 m2. Slit
-    # rolls and trim have none, so their slitting run has no cross-unit
-    # balance.
+    # roll only: 1 kg of film is 10 m2 and 1 kg of coated film is 4 m2. The
+    # coating run weighs both, so it has a cross-unit mass balance; slit
+    # rolls and trim are measured by area only, so slitting has none.
     {:ok, _} = Inventory.define_conversion(scope, @company, items["FILM"].id, kg.id, "10")
     {:ok, _} = Inventory.define_conversion(scope, @company, items["COATED"].id, kg.id, "4")
 
@@ -158,22 +158,25 @@ defmodule Bilimbi.Factory.ProductionExecution.MixCoatSlitScenario do
         "COAT",
         at.(2),
         [
-          draw(items["FILM"], receiving, 500, receipt_id(receipts, "FILM")),
+          draw(items["FILM"], receiving, 50, receipt_id(receipts, "FILM"))
+          |> Map.put(:unit_id, kg.id),
           draw(items["GLUE-DRY"], locations["REACTOR-A"], 80, output_id(dry_tx))
         ],
         [
           make(
             items["COATED"],
             locations["COATER-A"],
-            500,
+            125,
             "COATED-ROLL-1",
             "unit",
             "measured",
             "good"
           )
+          |> Map.put(:unit_id, kg.id)
         ],
-        # Area balances exactly. The glue's 80 kg has no mass output to
-        # balance against, because the coated roll is measured by area, so
+        # The film and the coated roll are weighed and stocked by area, where
+        # they balance exactly. The glue's 80 kg has no mass output to
+        # balance against, because the coated roll's native unit is area, so
         # it is a variance in kilograms with its own evidence.
         %{
           units: [
@@ -181,7 +184,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MixCoatSlitScenario do
               unit_id: kg.id,
               evidence: "synthetic glue pump totaliser; PO PO-COAT-1; line COATER-A",
               reconciliation_basis:
-                "80 kg dry glue applied to the film; the coated roll is measured by area, not weighed"
+                "80 kg dry glue applied to the film; the coated roll is stocked by area"
             }
           ]
         }

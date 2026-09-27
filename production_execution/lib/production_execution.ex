@@ -140,7 +140,7 @@ defmodule Bilimbi.Factory.ProductionExecution do
     end
   end
 
-  @doc "Reads one run's Inventory balances per native unit, net of its corrections: input, product, trim, waste, and signed variance; `cross_unit` carries Inventory's balance across units where every line has an explicit conversion."
+  @doc "Reads one run's Inventory balances per native unit, net of its corrections: input, product, trim, waste, and signed variance; `cross_unit` carries Inventory's balance across units where every line was posted in the unit."
   def get_run_yield(%Scope{} = scope, company_id, execution_id) do
     with {:ok, _company} <- company(scope, company_id),
          do: Yield.for_run(scope, company_id, execution_id)

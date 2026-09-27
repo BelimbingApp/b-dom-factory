@@ -77,7 +77,8 @@ defmodule Bilimbi.Factory.ProductionExecution.MixCoatSlitScenarioTest do
 
     # Coating mixes film by area with glue by mass. Each native unit balances
     # on its own: the area is exact, and the glue's mass is a variance in
-    # kilograms with its own evidence, because the coated roll is not weighed.
+    # kilograms with its own evidence, because the coated roll is stocked by
+    # area. The film and the roll were weighed; area derives from the weight.
     assert Decimal.eq?(quantity(coat_tx, items["FILM"].id, :input), 500)
     assert Decimal.eq?(quantity(coat_tx, items["GLUE-DRY"].id, :input), 80)
     assert Decimal.eq?(quantity(coat_tx, items["COATED"].id, :output), 500)
@@ -90,9 +91,9 @@ defmodule Bilimbi.Factory.ProductionExecution.MixCoatSlitScenarioTest do
     assert Decimal.eq?(glue_variance.native_quantity, 80)
     assert glue_variance.evidence =~ "glue pump totaliser"
 
-    # Across units, the film and the coated roll have explicit conversions to
-    # kilograms, so a mass balance is read: 50 kg film and 80 kg glue in,
-    # 125 kg coated out, 5 kg apart. Nothing records that 5 kg as an entry.
+    # Across units, the film and the coated roll were recorded in kilograms,
+    # so a mass balance is read: 50 kg film and 80 kg glue in, 125 kg coated
+    # out, 5 kg apart. Nothing records that 5 kg as an entry.
     assert {:ok, %Inventory.Balance{cross_unit: [coat_mass]}} =
              Inventory.get_transaction_balance(scope, 73, coat_tx.id)
 
@@ -144,7 +145,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MixCoatSlitScenarioTest do
            inspect(slit_mass)
 
     # The coating run's yield carries the cross-unit mass balance; the slit
-    # rolls and trim have no conversion, so slitting has none.
+    # rolls and trim are recorded by area only, so slitting has none.
     assert {:ok, %{balances: [_coat_mass, _coat_area], cross_unit: [^coat_mass]}} =
              ProductionExecution.get_run_yield(scope, 73, coat.id)
 
@@ -160,6 +161,21 @@ defmodule Bilimbi.Factory.ProductionExecution.MixCoatSlitScenarioTest do
     assert Decimal.eq?(unit_input, 500)
     assert [_mass, %{unit: %{code: "m2"}, unit_output: unit_output}] = hd(unit_runs).balances
     assert Decimal.eq?(unit_output, 500)
+    assert hd(unit_runs).cross_unit == [coat_mass]
+
+    # A later conversion version restates nothing already posted: the
+    # cross-unit balance and the run and unit yields read as before.
+    {:ok, run_yield} = ProductionExecution.get_run_yield(scope, 73, coat.id)
+
+    for sku <- ["FILM", "COATED"] do
+      {:ok, _} = Inventory.define_conversion(scope, 73, items[sku].id, kg.id, "7")
+    end
+
+    assert {:ok, %Inventory.Balance{cross_unit: [^coat_mass]}} =
+             Inventory.get_transaction_balance(scope, 73, coat_tx.id)
+
+    assert {:ok, ^run_yield} = ProductionExecution.get_run_yield(scope, 73, coat.id)
+    assert {:ok, %{runs: ^unit_runs}} = ProductionExecution.get_unit_yield(scope, 73, coated_roll)
 
     receipt_identities = MapSet.new(receipts, fn {_sku, {_tx, identity_id}} -> identity_id end)
     receipt_transactions = MapSet.new(receipts, fn {_sku, {tx, _}} -> tx.id end)

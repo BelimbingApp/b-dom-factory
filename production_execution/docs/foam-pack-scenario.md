@@ -48,8 +48,8 @@ Every value below is representative.
   balances are native-unit quantities, not a plant-approved KPI definition.
   Should packs be stocked by count rather than mass, a cut or pack run may
   mix native units: Inventory then balances each unit on its own with a
-  variance per unit, and reads a cross-unit balance only where the pack item
-  has an explicit conversion.
+  variance per unit, and reads a cross-unit balance only where the pack
+  lines are also recorded in the other unit.
 - The ledger and execution read models expose the facts needed for per-run
   material balance, but Factory has no monthly supplier/run/resource/location
   report API yet. In this scenario supplier remains free text and trim is

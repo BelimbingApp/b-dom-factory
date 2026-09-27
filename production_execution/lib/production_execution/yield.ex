@@ -53,7 +53,7 @@ defmodule Bilimbi.Factory.ProductionExecution.Yield do
 
   # Balances are grouped by native unit and never converted between units;
   # Inventory's cross-unit balance is carried as read, so a run only has one
-  # where every line has an explicit conversion. A correction entry nets
+  # in a unit every line was posted in. A correction entry nets
   # into the side of the run entry it adjusts.
   defp summarize(execution, transaction, corrections, balance, identity_id) do
     original = Enum.filter(transaction.entries, &(&1.role in [:stock, :variance]))

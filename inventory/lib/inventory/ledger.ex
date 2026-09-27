@@ -257,48 +257,40 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
     end
   end
 
-  # One `unit_id` of a conversion equals `factor` native units, so a native
-  # quantity divides by the factor. Only the current version of an item's
-  # conversion is used, and it is named in the result.
+  # A line counts in a unit only as it was posted: its native quantity when
+  # native in that unit, or its recorded quantity when recorded in it, with
+  # the conversion version it was posted through named. Nothing is converted
+  # at read time, so a later conversion version never restates the balance.
   defp cross_unit(company_id, sided, units) do
-    natives =
-      Map.new(sided, fn {_side, entry} -> {entry.item_id, entry.native_unit.id} end)
+    conversion_ids =
+      for {_side, entry} <- sided, entry.conversion_id, uniq: true, do: entry.conversion_id
 
-    item_ids = Map.keys(natives)
-    unit_ids = Enum.map(units, & &1.id)
-
-    conversions =
+    factors =
       from(conversion in Schemas.Conversion,
-        join: material in Schemas.Material,
-        on: material.id == conversion.material_id,
-        where:
-          conversion.company_id == ^company_id and material.item_id in ^item_ids and
-            conversion.unit_id in ^unit_ids,
-        order_by: [asc: conversion.version],
-        select: {material.item_id, conversion}
+        where: conversion.company_id == ^company_id and conversion.id in ^conversion_ids,
+        select: {conversion.id, conversion.factor}
       )
       |> Repo.all()
-      |> Map.new(fn {item_id, conversion} -> {{item_id, conversion.unit_id}, conversion} end)
+      |> Map.new()
 
     Enum.flat_map(units, fn unit ->
-      bases =
-        Map.new(item_ids, fn item_id ->
-          if natives[item_id] == unit.id,
-            do: {item_id, :native},
-            else: {item_id, conversions[{item_id, unit.id}]}
-        end)
-
-      if Enum.any?(bases, fn {_item_id, basis} -> is_nil(basis) end),
-        do: [],
-        else: [converted(unit, sided, bases)]
+      if Enum.all?(sided, fn {_side, entry} -> in_unit?(entry, unit) end),
+        do: [converted(unit, sided, factors)],
+        else: []
     end)
   end
 
-  defp converted(unit, sided, bases) do
+  defp in_unit?(entry, unit),
+    do:
+      entry.native_unit.id == unit.id or
+        (entry.recorded_unit && entry.recorded_unit.id == unit.id)
+
+  defp converted(unit, sided, factors) do
     convert = fn entry ->
-      case bases[entry.item_id] do
-        :native -> entry.native_quantity
-        conversion -> entry.native_quantity |> Decimal.div(conversion.factor) |> Decimal.round(12)
+      cond do
+        entry.native_unit.id == unit.id -> entry.native_quantity
+        Decimal.negative?(entry.native_quantity) -> Decimal.negate(entry.recorded_quantity)
+        true -> entry.recorded_quantity
       end
     end
 
@@ -311,14 +303,17 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
       output: output,
       difference: Decimal.sub(input, output),
       conversions:
-        for {item_id, %Schemas.Conversion{} = conversion} <- Enum.sort(bases) do
+        for {_side, entry} <- sided,
+            entry.native_unit.id != unit.id,
+            uniq: true do
           %{
-            item_id: item_id,
-            conversion_id: conversion.id,
-            version: conversion.version,
-            factor: conversion.factor
+            item_id: entry.item_id,
+            conversion_id: entry.conversion_id,
+            version: entry.conversion_version,
+            factor: Map.fetch!(factors, entry.conversion_id)
           }
         end
+        |> Enum.sort_by(&{&1.item_id, &1.version})
     }
   end
 
