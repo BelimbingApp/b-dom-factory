@@ -163,7 +163,14 @@ defmodule Bilimbi.Factory.ProductDefinition.Web.ResourceTypesLive do
 
   defp error_text(%Ecto.Changeset{} = changeset) do
     changeset.errors
-    |> Enum.map(fn {field, {message, _}} -> "#{Phoenix.Naming.humanize(field)} #{message}" end)
+    |> Enum.map(fn {field, {message, options}} ->
+      message =
+        Regex.replace(~r/%{(\w+)}/, message, fn _, key ->
+          options |> Keyword.get(String.to_existing_atom(key)) |> to_string()
+        end)
+
+      "#{Phoenix.Naming.humanize(field)} #{message}"
+    end)
     |> Enum.join("; ")
   end
 

@@ -62,6 +62,29 @@ defmodule BilimbiWeb.FactoryConversionsLiveTest do
            |> Enum.all?()
   end
 
+  test "refuses a non-positive factor with a readable message", %{
+    conn: conn,
+    item: item,
+    other: other,
+    scope: scope
+  } do
+    grant_capabilities!([
+      "factory.inventory.configuration.view",
+      "factory.inventory.configuration.manage"
+    ])
+
+    {:ok, view, _html} = conn |> log_in_as() |> live(~p"/factory/conversions")
+    render_click(element(view, "button[phx-click='select'][phx-value-id='#{item.id}']"))
+
+    view
+    |> form("#conversion-form", conversion: %{unit_id: other.id, factor: "-5"})
+    |> render_submit()
+
+    assert has_element?(view, "#conversion-error", "Factor must be greater than 0")
+    refute render(view) =~ "%{"
+    assert {:ok, []} = Inventory.list_conversions(scope, 73, item.id)
+  end
+
   test "a viewer cannot publish a conversion", %{conn: conn, item: item, other: other} do
     grant_capabilities!(["factory.inventory.configuration.view"])
     {:ok, view, _html} = conn |> log_in_as() |> live(~p"/factory/conversions")
