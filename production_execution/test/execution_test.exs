@@ -8,6 +8,9 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
   import Bilimbi.Factory.Inventory.TestFixtures
   import Bilimbi.Factory.ProductionExecution.TestFixtures
 
+  @import_principal "test.production_import"
+  @import_capability "factory.production-execution.import"
+
   setup do
     context = mill!()
 
@@ -666,6 +669,65 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
 
     assert transaction.effective_at == attrs.completed_at
     assert DateTime.compare(transaction.recorded_at, attrs.completed_at) == :gt
+  end
+
+  test "a named system principal imports only while granted in the order's company", context do
+    %{scope: scope, order: order} = context
+
+    install_authz!([
+      %{
+        name: @import_principal,
+        description: "Imports production executions for this test",
+        capabilities: [@import_capability]
+      }
+    ])
+
+    assert {:ok, token} = Authentication.delegate_system(scope, @import_principal, 73)
+    assert {:ok, job_scope} = Authentication.resume_system(token)
+    attrs = execution(context, "EX-SYSTEM-IMPORT")
+
+    assert {:error, :import_not_authorized} =
+             ProductionExecution.complete_operation(job_scope, 73, order.id, :import, attrs)
+
+    assert [] = Repo.all(Bilimbi.Factory.ProductionExecution.Schemas.Execution)
+
+    # Base Authz tests the administrator grant API; seed its grant row here to
+    # exercise Production Execution's boundary with a real named Scope.
+    SQL.query!(
+      Repo,
+      "INSERT INTO base_authz_system_principal_capabilities (company_id, principal, capability_key) VALUES ($1, $2, $3)",
+      [73, @import_principal, @import_capability]
+    )
+
+    assert {:ok, other_token} = Authentication.delegate_system(scope, @import_principal, 74)
+    assert {:ok, other_scope} = Authentication.resume_system(other_token)
+
+    assert {:error, :import_not_authorized} =
+             ProductionExecution.complete_operation(other_scope, 73, order.id, :import, attrs)
+
+    assert {:ok, completed} =
+             ProductionExecution.complete_operation(job_scope, 73, order.id, :import, attrs)
+
+    assert completed.source == "import"
+
+    %{rows: [["system", 0, %{"system_principal" => @import_principal}]]} =
+      SQL.query!(
+        Repo,
+        "SELECT actor_type, actor_id, context FROM base_authz_decision_logs WHERE capability = $1 AND allowed = true",
+        [@import_capability]
+      )
+
+    SQL.query!(
+      Repo,
+      "DELETE FROM base_authz_system_principal_capabilities WHERE company_id = $1 AND principal = $2 AND capability_key = $3",
+      [73, @import_principal, @import_capability]
+    )
+
+    assert {:error, :import_not_authorized} =
+             ProductionExecution.complete_operation(job_scope, 73, order.id, :import, attrs)
+
+    assert [%{id: id}] = Repo.all(Bilimbi.Factory.ProductionExecution.Schemas.Execution)
+    assert id == completed.id
   end
 
   test "production trace follows Inventory ancestry backward and forward with run context",
