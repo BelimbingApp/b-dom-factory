@@ -19,6 +19,35 @@ defmodule Bilimbi.Factory.ProductDefinition.Schemas.Product do
   end
 end
 
+defmodule Bilimbi.Factory.ProductDefinition.Schemas.ResourceType do
+  @moduledoc false
+
+  # A company's own kind of resource. What kinds exist, and what each one
+  # measures, is that company's configuration; nothing here names one.
+
+  use Ecto.Schema
+  import Ecto.Changeset
+
+  schema "factory_resource_types" do
+    field(:company_id, :integer)
+    field(:code, :string)
+    field(:name, :string)
+    field(:property_definitions, {:array, :map}, default: [])
+    timestamps(type: :naive_datetime)
+  end
+
+  @doc "Takes already normalized property definitions; the facade validates them."
+  def changeset(attrs) do
+    %__MODULE__{}
+    |> cast(attrs, [:company_id, :code, :name, :property_definitions])
+    |> update_change(:code, &(&1 |> String.trim() |> String.upcase()))
+    |> validate_required([:company_id, :code, :name, :property_definitions])
+    |> validate_length(:code, max: 64)
+    |> validate_length(:name, max: 255)
+    |> unique_constraint([:company_id, :code], name: :factory_resource_types_company_code_unique)
+  end
+end
+
 defmodule Bilimbi.Factory.ProductDefinition.Schemas.Resource do
   use Ecto.Schema
   import Ecto.Changeset
@@ -27,16 +56,18 @@ defmodule Bilimbi.Factory.ProductDefinition.Schemas.Resource do
     field(:company_id, :integer)
     field(:code, :string)
     field(:name, :string)
-    field(:kind, :string)
+    field(:resource_type_id, :integer)
+    field(:properties, :map, default: %{})
     timestamps(type: :naive_datetime)
   end
 
+  @doc "Takes property values already validated against the type's definitions."
   def changeset(attrs) do
     %__MODULE__{}
-    |> cast(attrs, [:company_id, :code, :name, :kind])
-    |> validate_required([:company_id, :code, :name, :kind])
-    |> validate_inclusion(:kind, ["work_centre", "machine", "line", "station"])
+    |> cast(attrs, [:company_id, :code, :name, :resource_type_id, :properties])
+    |> validate_required([:company_id, :code, :name, :resource_type_id, :properties])
     |> unique_constraint([:company_id, :code], name: :factory_resources_company_code_unique)
+    |> foreign_key_constraint(:resource_type_id, name: :factory_resources_resource_type_id_fkey)
   end
 end
 

@@ -21,10 +21,11 @@ company is reported as not found. Results are read models (`Item`, `Unit`,
 
 | Area | Operations |
 | --- | --- |
-| Item master | `list_items/3`, `get_item/3`, `get_item_by_sku/3`, `create_item/3` |
+| Item master | `item_settings/2`, `list_items/3`, `get_item/3`, `get_item_by_sku/3`, `create_item/3` |
 | Units | `list_units/3`, `get_unit/3`, `create_unit/3` |
 | Locations | `list_locations/3`, `get_location/3`, `create_location/3` |
-| Material identity | `register_material/4`, `get_material/3` |
+| Material types | `create_material_type/3`, `get_material_type/3`, `list_material_types/3` |
+| Material identity | `register_material/5`, `get_material/3` |
 | Conversions | `define_conversion/5`, `list_conversions/3`, `get_conversion/5` |
 | Stock position | `get_stock_position/4` |
 | Ledger postings | `record_receipt/3`, `record_transfer/3`, `record_consumption/3`, `record_correction/3` |
@@ -33,9 +34,24 @@ company is reported as not found. Results are read models (`Item`, `Unit`,
 | Lot and unit genealogy | `get_identity/3`, `get_identity_positions/3`, `trace_backward/3`, `trace_forward/3`, `list_identity_draws/3` |
 | Posting authority | `posting_authority_registered?/1` |
 
+- **Item settings.** The item master's status vocabulary and default currency
+  are the company's Base Settings, `factory.inventory.item_statuses` (an
+  ordered list whose first entry is the default status) and
+  `factory.inventory.default_currency_code`, resolved for the company and then
+  its tenant. Inventory declares them in its contribution provider with no
+  default of its own: unconfigured, any non-blank status is accepted and each
+  item names its currency. `item_settings/2` reads what applies.
+- **Material types.** A company defines material types with property
+  definitions, one mechanism shared with Product Definition's resource types
+  (`Bilimbi.Factory.Inventory.PropertyDefinition`): key, label, value type
+  (`string`, `integer`, `decimal`, `boolean`), optional unit label for a
+  numeric value, and required. A type is immutable in this slice. Nothing in
+  code names a type: which types exist is the company's configuration.
 - **Material identity.** An item becomes a stocked material once, with a
   native unit that never changes afterwards. Stock quantities are always held
-  in that unit.
+  in that unit. `register_material/5` may give the material one of the
+  company's types and its `properties`, validated against that type's
+  definitions; a material without a type holds none.
 - **Conversions.** One conversion unit equals `factor` native units. Rows are
   immutable, so a changed factor is the next version. The earlier versions
   stay readable, so a converted quantity can name the basis it used.
@@ -190,13 +206,15 @@ source mapping for either.
 | Table | Disposition | Notes |
 | --- | --- | --- |
 | `commerce_inventory_items` | compatible baseline | Belimbing's item master, verified by `SchemaContract` and adopted as is |
-| `factory_inventory_units`, `factory_inventory_locations`, `factory_inventory_materials`, `factory_inventory_unit_conversions` | Bilimbi-only | company-owned; not in the schema contract, because an adopted Belimbing database gets them from `mix bilimbi.migrate` |
+| `factory_inventory_units`, `factory_inventory_locations`, `factory_inventory_material_types`, `factory_inventory_materials`, `factory_inventory_unit_conversions` | Bilimbi-only | company-owned; not in the schema contract, because an adopted Belimbing database gets them from `mix bilimbi.migrate`. A material's type is a composite reference on `(material_type_id, company_id)`, so it stays in its company |
 | `factory_inventory_transactions`, `factory_inventory_transaction_entries`, `factory_inventory_genealogy_links` | Bilimbi-only | the ledger; append-only and balance-checked by triggers |
 | `factory_inventory_identities` | Bilimbi-only | immutable lot or unit identities, linked to stock entries and their source transaction |
 
 The item master keeps Belimbing's own columns, including the location-less
 `quantity_on_hand` and free-text `storage_location`. Inventory neither changes
-them nor derives stock positions from them. `category_id` and
+them nor derives stock positions from them. The adopted column defaults for
+`status` and `currency_code` belong to the adopted table; Inventory writes
+both explicitly from the company's item settings or the request. `category_id` and
 `product_template_id` point at Belimbing's Commerce Catalog, which Bilimbi
 does not have, so they are read as opaque IDs and `create_item/3` does not
 accept them. Belimbing's item photos and marketplace fitments are Commerce

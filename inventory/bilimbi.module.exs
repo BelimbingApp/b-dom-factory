@@ -8,6 +8,7 @@
   dependencies: [
     "base/database",
     "base/module_registry",
+    "base/settings",
     "base/tenancy",
     "core/company"
   ],
@@ -18,7 +19,8 @@
     20_260_926_120_000 => :bilimbi_only,
     20_260_926_140_000 => :bilimbi_only,
     20_260_927_120_000 => :bilimbi_only,
-    20_260_927_130_000 => :bilimbi_only
+    20_260_927_130_000 => :bilimbi_only,
+    20_260_927_140_000 => :bilimbi_only
   },
   web: nil,
   schema_contract: Bilimbi.Factory.Inventory.SchemaContract,

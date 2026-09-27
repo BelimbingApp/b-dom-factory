@@ -24,6 +24,15 @@ and phases are Bilimbi's `docs/plans/factory/0000-factory-domain.md` and
 - Namespaces are `Bilimbi.Factory.<Module>` with OTP app
   `:bilimbi_factory_<folder>`, matching Base and Core's
   `Bilimbi.<Container>.<Module>` shape that the graph-edge check keys on.
+- Domain code uses only meta-terms: material, material type, resource,
+  resource type, property, operation, output role, process family. A specific
+  industry, material, product, line, equipment, status, or currency name is a
+  company's configuration data (its material and resource types, their
+  property definitions, and its item settings); it never appears in code
+  identifiers, schema constants, inclusion lists, or defaults, and a fixture
+  carries such a name only as data. Validate a type's values with
+  `inventory/lib/inventory/property_definition.ex` and read item statuses and
+  the default currency with `Inventory.item_settings/2`.
 - Use `ProductDefinition.select_revisions/5` for an order's exact definition
   selection; its facade validates Inventory references through Inventory's public
   API. Do not read either module's private tables from another module.

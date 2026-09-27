@@ -244,13 +244,30 @@ defmodule Bilimbi.Factory.ProductionExecution.MixCoatSlitScenario do
         process_config: %{process_family: process_family}
       })
 
+    # One company type for every reactor and coater here; a type's code is
+    # the company's own vocabulary, so the scenario picks a neutral one.
+    resource_type =
+      case ProductDefinition.list_resource_types(scope, @company) do
+        {:ok, [type]} ->
+          type
+
+        {:ok, []} ->
+          {:ok, type} =
+            ProductDefinition.create_resource_type(scope, @company, %{
+              code: "MACHINE",
+              name: "Machine"
+            })
+
+          type
+      end
+
     resources =
       for resource_code <- operations |> Enum.map(&elem(&1, 3)) |> Enum.uniq(), into: %{} do
         {:ok, resource} =
           ProductDefinition.create_resource(scope, @company, %{
             code: resource_code,
             name: resource_code,
-            kind: "machine"
+            resource_type_id: resource_type.id
           })
 
         {resource_code, resource.id}

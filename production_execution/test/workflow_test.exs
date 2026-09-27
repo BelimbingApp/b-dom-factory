@@ -536,13 +536,19 @@ defmodule Bilimbi.Factory.ProductionExecution.WorkflowTest do
 
     {:ok, formula} = ProductDefinition.publish_formula(scope, 73, product.id, %{lines: lines})
 
+    {:ok, resource_type} =
+      ProductDefinition.create_resource_type(scope, 73, %{
+        code: "#{code}-MACHINE",
+        name: "Machine"
+      })
+
     routed =
       for {{operation, inputs, outputs}, sequence} <- Enum.with_index(operations, 1) do
         {:ok, resource} =
           ProductDefinition.create_resource(scope, 73, %{
             code: "#{code}-#{operation}",
             name: operation,
-            kind: "machine"
+            resource_type_id: resource_type.id
           })
 
         %{
