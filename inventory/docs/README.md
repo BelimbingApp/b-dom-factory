@@ -21,11 +21,11 @@ company is reported as not found. Results are read models (`Item`, `Unit`,
 
 | Area | Operations |
 | --- | --- |
-| Item master | `item_settings/2`, `list_items/3`, `get_item/3`, `get_item_by_sku/3`, `create_item/3` |
-| Units | `list_units/3`, `get_unit/3`, `create_unit/3` |
+| Item master | `item_settings/2`, `item_setting_overrides/2`, `configure_item_settings/3`, `list_items/3`, `get_item/3`, `get_item_by_sku/3`, `create_item/3` |
+| Units | `list_units/3`, `get_unit/3`, `create_unit/3`, `rename_unit/4`, `retire_unit/3` |
 | Locations | `list_locations/3`, `get_location/3`, `create_location/3` |
-| Material types | `create_material_type/3`, `get_material_type/3`, `list_material_types/3` |
-| Material identity | `register_material/5`, `get_material/3` |
+| Material types | `create_material_type/3`, `get_material_type/3`, `list_material_types/3`, `update_material_type/4`, `retire_material_type/3` |
+| Material identity | `register_material/5`, `create_material/5`, `get_material/3`, `list_materials/3`, `update_material/5`, `retire_material/3` |
 | Conversions | `define_conversion/5`, `list_conversions/3`, `get_conversion/5` |
 | Stock position | `get_stock_position/4` |
 | Ledger postings | `record_receipt/3`, `record_transfer/3`, `record_consumption/3`, `record_correction/3` |
@@ -40,21 +40,36 @@ company is reported as not found. Results are read models (`Item`, `Unit`,
   `factory.inventory.default_currency_code`, resolved for the company and then
   its tenant. Inventory declares them in its contribution provider with no
   default of its own: unconfigured, any non-blank status is accepted and each
-  item names its currency. `item_settings/2` reads what applies.
+  item names its currency. `item_settings/2` reads what applies,
+  `item_setting_overrides/2` reads only the company's own overrides (`nil`
+  where it inherits), and `configure_item_settings/3` writes both together.
 - **Material types.** A company defines material types with property
   definitions, one mechanism shared with Product Definition's resource types
   (`Bilimbi.Factory.Inventory.PropertyDefinition`): key, label, value type
   (`string`, `integer`, `decimal`, `boolean`), optional unit label for a
-  numeric value, and required. A type is immutable in this slice. Nothing in
-  code names a type: which types exist is the company's configuration.
+  numeric value, and required. A type's definitions can change until a
+  material uses it; later edits may change its code or name, and retirement
+  keeps existing references readable. Nothing in code names a type: which
+  types exist is the company's configuration.
 - **Material identity.** An item becomes a stocked material once, with a
   native unit that never changes afterwards. Stock quantities are always held
   in that unit. `register_material/5` may give the material one of the
   company's types and its `properties`, validated against that type's
   definitions; a material without a type holds none.
+  `create_material/5` creates the item and material in one transaction.
+  Updating preserves the native unit and type. Retirement requires a zero
+  stock balance and refuses new postings, while corrections and prior
+  transactions remain readable.
+- **Unit lifecycle.** A unit's code remains stable; its name can be edited.
+  Retiring a unit keeps its historical IDs readable and prevents its use for
+  new materials and conversions; a unit that is an active material's native
+  unit is refused as `:unit_in_use`.
 - **Conversions.** One conversion unit equals `factor` native units. Rows are
   immutable, so a changed factor is the next version. The earlier versions
   stay readable, so a converted quantity can name the basis it used.
+- **Administration.** The company screens at `/factory/materials`,
+  `/factory/material-types`, `/factory/units`, `/factory/conversions`, and
+  `/factory/item-settings` use the facade and check view/manage capabilities.
 - **Stock positions.** A position is read by item and location, in the native
   unit: the sum of the ledger's stock entries there. Inventory does not
   depend on Production Execution.

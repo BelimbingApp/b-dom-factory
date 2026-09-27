@@ -8,11 +8,12 @@ defmodule Bilimbi.Factory.Inventory.Schemas.Material do
   import Ecto.Changeset
 
   schema "factory_inventory_materials" do
-    field :company_id, :id
-    field :item_id, :id
-    field :native_unit_id, :id
-    field :material_type_id, :id
-    field :properties, :map, default: %{}
+    field(:company_id, :id)
+    field(:item_id, :id)
+    field(:native_unit_id, :id)
+    field(:material_type_id, :id)
+    field(:properties, :map, default: %{})
+    field(:retired_at, :naive_datetime)
     timestamps(type: :naive_datetime, inserted_at: :created_at)
   end
 

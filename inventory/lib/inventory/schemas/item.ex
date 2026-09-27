@@ -19,19 +19,19 @@ defmodule Bilimbi.Factory.Inventory.Schemas.Item do
   import Ecto.Changeset
 
   schema "commerce_inventory_items" do
-    field :company_id, :id
-    field :category_id, :id
-    field :product_template_id, :id
-    field :sku, :string
-    field :status, :string
-    field :title, :string
-    field :description, :string
-    field :quantity_on_hand, :integer, default: 1
-    field :storage_location, :string
-    field :notes, :string
-    field :unit_cost_amount, :integer
-    field :target_price_amount, :integer
-    field :currency_code, :string
+    field(:company_id, :id)
+    field(:category_id, :id)
+    field(:product_template_id, :id)
+    field(:sku, :string)
+    field(:status, :string)
+    field(:title, :string)
+    field(:description, :string)
+    field(:quantity_on_hand, :integer, default: 1)
+    field(:storage_location, :string)
+    field(:notes, :string)
+    field(:unit_cost_amount, :integer)
+    field(:target_price_amount, :integer)
+    field(:currency_code, :string)
     timestamps(type: :naive_datetime, inserted_at: :created_at)
   end
 
@@ -80,6 +80,19 @@ defmodule Bilimbi.Factory.Inventory.Schemas.Item do
     |> validate_number(:unit_cost_amount, greater_than_or_equal_to: 0)
     |> validate_number(:target_price_amount, greater_than_or_equal_to: 0)
     |> unique_constraint(:sku, name: :commerce_inventory_items_company_id_sku_unique)
+  end
+
+  @doc "Updates item presentation and status while preserving its SKU and ledger identity."
+  def update_changeset(item, attributes, settings) do
+    item
+    |> cast(attributes, [:title, :description, :status, :notes, :currency_code])
+    |> update_change(:status, &String.trim/1)
+    |> update_change(:currency_code, &(&1 |> String.trim() |> String.upcase()))
+    |> validate_required([:title, :status, :currency_code])
+    |> validate_length(:title, max: 255)
+    |> validate_length(:notes, max: 5000)
+    |> validate_length(:currency_code, is: 3)
+    |> validate_status(settings.statuses)
   end
 
   defp default_status(changeset, [first | _rest]) do

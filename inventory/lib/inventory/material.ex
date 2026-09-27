@@ -9,7 +9,15 @@ defmodule Bilimbi.Factory.Inventory.Material do
   alias Bilimbi.Factory.Inventory.Unit
 
   @enforce_keys [:item_id, :company_id, :sku, :native_unit]
-  defstruct [:item_id, :company_id, :sku, :native_unit, :material_type_id, properties: %{}]
+  defstruct [
+    :item_id,
+    :company_id,
+    :sku,
+    :native_unit,
+    :material_type_id,
+    :retired_at,
+    properties: %{}
+  ]
 
   @type t :: %__MODULE__{
           item_id: pos_integer(),
@@ -17,6 +25,7 @@ defmodule Bilimbi.Factory.Inventory.Material do
           sku: String.t(),
           native_unit: Unit.t(),
           material_type_id: pos_integer() | nil,
-          properties: PropertyDefinition.values()
+          properties: PropertyDefinition.values(),
+          retired_at: NaiveDateTime.t() | nil
         }
 end

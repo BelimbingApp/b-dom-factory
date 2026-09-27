@@ -30,6 +30,44 @@ defmodule Bilimbi.Factory.Inventory.MaterialTest do
   end
 
   describe "material identity" do
+    test "a retired unit stays readable but cannot take new material or conversion", %{
+      scope: scope,
+      item: item
+    } do
+      {:ok, native} = Inventory.create_unit(scope, 73, %{code: "u1", name: "Unit one"})
+      {:ok, alternate} = Inventory.create_unit(scope, 73, %{code: "u2", name: "Unit two"})
+
+      assert {:ok, retired} = Inventory.retire_unit(scope, 73, alternate.id)
+      assert retired.retired_at
+
+      assert {:error, :unit_retired} =
+               Inventory.register_material(scope, 73, item.id, alternate.id)
+
+      assert {:ok, _} = Inventory.register_material(scope, 73, item.id, native.id)
+
+      assert {:error, :unit_retired} =
+               Inventory.define_conversion(scope, 73, item.id, alternate.id, "2")
+
+      assert {:error, :unit_retired} =
+               Inventory.rename_unit(scope, 73, alternate.id, %{name: "Other"})
+
+      assert {:ok, ^retired} = Inventory.get_unit(scope, 73, alternate.id)
+    end
+
+    test "a unit is not retired while an active material is native to it", %{
+      scope: scope,
+      item: item
+    } do
+      {:ok, native} = Inventory.create_unit(scope, 73, %{code: "u1", name: "Unit one"})
+      {:ok, _} = Inventory.register_material(scope, 73, item.id, native.id)
+
+      assert {:error, :unit_in_use} = Inventory.retire_unit(scope, 73, native.id)
+
+      {:ok, _} = Inventory.retire_material(scope, 73, item.id)
+      assert {:ok, %{retired_at: retired_at}} = Inventory.retire_unit(scope, 73, native.id)
+      assert retired_at
+    end
+
     test "registers an item once, in its native unit", %{
       scope: scope,
       item: item,
@@ -64,6 +102,43 @@ defmodule Bilimbi.Factory.Inventory.MaterialTest do
   end
 
   describe "material types" do
+    test "edits an unused type and retires it without deleting history", %{
+      scope: scope,
+      item: item
+    } do
+      {:ok, unit} = Inventory.create_unit(scope, 73, %{code: "u1", name: "Unit one"})
+      {:ok, type} = Inventory.create_material_type(scope, 73, %{code: "TYPE_A", name: "Type A"})
+
+      {:ok, updated} =
+        Inventory.update_material_type(scope, 73, type.id, %{
+          name: "Revised type",
+          property_definitions: [%{key: "measure", label: "Measure", value_type: "integer"}]
+        })
+
+      assert updated.name == "Revised type"
+      assert length(updated.property_definitions) == 1
+
+      {:ok, _material} =
+        Inventory.register_material(scope, 73, item.id, unit.id,
+          material_type_id: type.id,
+          properties: %{}
+        )
+
+      assert {:error, :material_type_in_use} =
+               Inventory.update_material_type(scope, 73, type.id, %{
+                 property_definitions: []
+               })
+
+      assert {:ok, retired} = Inventory.retire_material_type(scope, 73, type.id)
+      assert retired.retired_at
+
+      assert {:error, :material_type_retired} =
+               Inventory.update_material_type(scope, 73, type.id, %{name: "Other"})
+
+      assert {:error, :material_type_retired} = Inventory.retire_material_type(scope, 73, type.id)
+      assert {:ok, ^retired} = Inventory.get_material_type(scope, 73, type.id)
+    end
+
     @definitions [
       %{key: "thickness", label: "Thickness", value_type: "decimal", unit: "mm", required: true},
       %{key: "grade", label: "Grade", value_type: "string"},

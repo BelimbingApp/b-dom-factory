@@ -6,14 +6,15 @@ defmodule Bilimbi.Factory.Inventory.MaterialType do
   """
 
   @enforce_keys [:id, :company_id, :code, :name, :property_definitions]
-  defstruct [:id, :company_id, :code, :name, :property_definitions]
+  defstruct [:id, :company_id, :code, :name, :property_definitions, :retired_at]
 
   @type t :: %__MODULE__{
           id: pos_integer(),
           company_id: pos_integer(),
           code: String.t(),
           name: String.t(),
-          property_definitions: [Bilimbi.Factory.Inventory.PropertyDefinition.definition()]
+          property_definitions: [Bilimbi.Factory.Inventory.PropertyDefinition.definition()],
+          retired_at: NaiveDateTime.t() | nil
         }
 
   @doc false
@@ -24,7 +25,8 @@ defmodule Bilimbi.Factory.Inventory.MaterialType do
       company_id: type.company_id,
       code: type.code,
       name: type.name,
-      property_definitions: type.property_definitions
+      property_definitions: type.property_definitions,
+      retired_at: type.retired_at
     }
   end
 end

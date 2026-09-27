@@ -19,13 +19,13 @@ defmodule Bilimbi.Factory.ProductDefinitionTest do
 
     SQL.query!(
       Repo,
-      "CREATE TEMPORARY TABLE factory_resource_types (id bigserial PRIMARY KEY, company_id bigint NOT NULL REFERENCES companies(id), code text NOT NULL, name text NOT NULL, property_definitions jsonb[] NOT NULL, inserted_at timestamp(0) NOT NULL, updated_at timestamp(0) NOT NULL, CONSTRAINT factory_resource_types_company_code_unique UNIQUE (company_id, code), UNIQUE(id, company_id)) ON COMMIT PRESERVE ROWS",
+      "CREATE TEMPORARY TABLE factory_resource_types (id bigserial PRIMARY KEY, company_id bigint NOT NULL REFERENCES companies(id), code text NOT NULL, name text NOT NULL, property_definitions jsonb[] NOT NULL, retired_at timestamp(0), inserted_at timestamp(0) NOT NULL, updated_at timestamp(0) NOT NULL, CONSTRAINT factory_resource_types_company_code_unique UNIQUE (company_id, code), UNIQUE(id, company_id)) ON COMMIT PRESERVE ROWS",
       []
     )
 
     SQL.query!(
       Repo,
-      "CREATE TEMPORARY TABLE factory_resources (id bigserial PRIMARY KEY, company_id bigint NOT NULL REFERENCES companies(id), code text NOT NULL, name text NOT NULL, resource_type_id bigint NOT NULL, properties jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(properties) = 'object'), inserted_at timestamp(0) NOT NULL, updated_at timestamp(0) NOT NULL, UNIQUE(company_id, code), CONSTRAINT factory_resources_resource_type_id_fkey FOREIGN KEY (resource_type_id, company_id) REFERENCES factory_resource_types (id, company_id)) ON COMMIT PRESERVE ROWS",
+      "CREATE TEMPORARY TABLE factory_resources (id bigserial PRIMARY KEY, company_id bigint NOT NULL REFERENCES companies(id), code text NOT NULL, name text NOT NULL, resource_type_id bigint NOT NULL, properties jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(properties) = 'object'), retired_at timestamp(0), inserted_at timestamp(0) NOT NULL, updated_at timestamp(0) NOT NULL, CONSTRAINT factory_resources_company_code_unique UNIQUE(company_id, code), CONSTRAINT factory_resources_resource_type_id_fkey FOREIGN KEY (resource_type_id, company_id) REFERENCES factory_resource_types (id, company_id)) ON COMMIT PRESERVE ROWS",
       []
     )
 
@@ -51,6 +51,46 @@ defmodule Bilimbi.Factory.ProductDefinitionTest do
     {:ok, scope} = Tenancy.scope(41)
     {:ok, other} = Tenancy.scope(42)
     %{scope: scope, other: other}
+  end
+
+  test "resource type definitions freeze on use and retirement preserves resource history", %{
+    scope: scope
+  } do
+    {:ok, type} = Definitions.create_resource_type(scope, 73, %{code: "TYPE_A", name: "Type A"})
+
+    {:ok, updated} =
+      Definitions.update_resource_type(scope, 73, type.id, %{
+        property_definitions: [%{key: "measure", label: "Measure", value_type: "integer"}]
+      })
+
+    assert length(updated.property_definitions) == 1
+
+    {:ok, resource} =
+      Definitions.create_resource(scope, 73, %{
+        code: "RESOURCE_A",
+        name: "Resource A",
+        resource_type_id: type.id,
+        properties: %{"measure" => 2}
+      })
+
+    assert {:error, :resource_type_in_use} =
+             Definitions.update_resource_type(scope, 73, type.id, %{
+               property_definitions: []
+             })
+
+    assert {:error, :resource_type_in_use} = Definitions.retire_resource_type(scope, 73, type.id)
+    assert {:ok, retired_resource} = Definitions.retire_resource(scope, 73, resource.id)
+    assert retired_resource.retired_at
+    assert {:ok, retired_type} = Definitions.retire_resource_type(scope, 73, type.id)
+    assert retired_type.retired_at
+    assert {:ok, ^retired_resource} = Definitions.get_resource(scope, 73, resource.id)
+
+    assert {:error, :resource_type_retired} =
+             Definitions.create_resource(scope, 73, %{
+               code: "RESOURCE_B",
+               name: "Resource B",
+               resource_type_id: type.id
+             })
   end
 
   test "an order can select exact product, formula and routing revisions", %{scope: scope} do
@@ -264,6 +304,68 @@ defmodule Bilimbi.Factory.ProductDefinitionTest do
         [75, type.id]
       )
     end
+  end
+
+  test "an over-long product or resource code is a changeset error", %{scope: scope} do
+    {:ok, output} = Inventory.create_item(scope, 73, %{sku: "OUT", title: "Out"})
+    {:ok, type} = Definitions.create_resource_type(scope, 73, %{code: "TYPE", name: "Type"})
+    long = String.duplicate("X", 300)
+
+    assert {:error, %Ecto.Changeset{errors: [code: {_, meta}]}} =
+             Definitions.create_product(scope, 73, output.id, %{code: long, name: "Out"})
+
+    assert meta[:count] == 64
+
+    assert {:error, %Ecto.Changeset{errors: [code: {_, meta}]}} =
+             Definitions.create_resource(scope, 73, %{
+               code: long,
+               name: "R",
+               resource_type_id: type.id
+             })
+
+    assert meta[:count] == 64
+
+    {:ok, resource} =
+      Definitions.create_resource(scope, 73, %{code: "R", name: "R", resource_type_id: type.id})
+
+    assert {:error, %Ecto.Changeset{errors: [name: {_, meta}]}} =
+             Definitions.update_resource(scope, 73, resource.id, %{name: long})
+
+    assert meta[:count] == 255
+  end
+
+  test "a formula or routing refuses a retired material", %{scope: scope} do
+    {:ok, input} = Inventory.create_item(scope, 73, %{sku: "IN", title: "In"})
+    {:ok, output} = Inventory.create_item(scope, 73, %{sku: "OUT", title: "Out"})
+    {:ok, unit} = Inventory.create_unit(scope, 73, %{code: "pcs", name: "Pieces"})
+    {:ok, _} = Inventory.register_material(scope, 73, input.id, unit.id)
+    {:ok, _} = Inventory.retire_material(scope, 73, input.id)
+    {:ok, product} = Definitions.create_product(scope, 73, output.id, %{code: "OUT", name: "Out"})
+    {:ok, type} = Definitions.create_resource_type(scope, 73, %{code: "TYPE", name: "Type"})
+
+    {:ok, resource} =
+      Definitions.create_resource(scope, 73, %{code: "R", name: "R", resource_type_id: type.id})
+
+    assert {:error, :material_retired} =
+             Definitions.publish_formula(scope, 73, product.id, %{
+               lines: [
+                 %{item_id: input.id, unit_id: unit.id, role: "input", quantity: 1},
+                 %{item_id: output.id, unit_id: unit.id, role: "output", quantity: 1}
+               ]
+             })
+
+    assert {:error, :material_retired} =
+             Definitions.publish_routing(scope, 73, product.id, %{
+               operations: [
+                 %{
+                   code: "OP",
+                   sequence: 1,
+                   inputs: [input.id],
+                   outputs: [output.id],
+                   allowed_resource_ids: [resource.id]
+                 }
+               ]
+             })
   end
 
   test "definitions refuse foreign items and resources across company boundaries", %{

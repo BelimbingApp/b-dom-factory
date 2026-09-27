@@ -6,10 +6,12 @@
   otp_app: :bilimbi_factory_inventory,
   namespace: Bilimbi.Factory.Inventory,
   dependencies: [
+    "base/authz",
     "base/database",
     "base/module_registry",
     "base/settings",
     "base/tenancy",
+    "base/ui",
     "core/company"
   ],
   migrations: "priv/repo/migrations",
@@ -20,9 +22,12 @@
     20_260_926_140_000 => :bilimbi_only,
     20_260_927_120_000 => :bilimbi_only,
     20_260_927_130_000 => :bilimbi_only,
-    20_260_927_140_000 => :bilimbi_only
+    20_260_927_140_000 => :bilimbi_only,
+    20_260_927_160_000 => :bilimbi_only,
+    20_260_927_161_000 => :bilimbi_only,
+    20_260_927_162_000 => :bilimbi_only
   },
-  web: nil,
+  web: "priv/web_routes.exs",
   schema_contract: Bilimbi.Factory.Inventory.SchemaContract,
   contribution_provider: Bilimbi.Factory.Inventory.Contributions,
   dev_seed: nil
