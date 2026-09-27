@@ -55,7 +55,8 @@ defmodule Bilimbi.Factory.Inventory.Web.ItemSettingsLive do
           {:noreply, socket |> load() |> put_flash(:success, "Item settings saved.")}
 
         {:error, reason} ->
-          {:noreply, socket |> assign(:form, settings_form(params)) |> assign(:error, error_text(reason))}
+          {:noreply,
+           socket |> assign(:form, settings_form(params)) |> assign(:error, error_text(reason))}
       end
     else
       {:noreply, assign(socket, :error, "You do not have permission to manage item settings.")}
@@ -68,17 +69,26 @@ defmodule Bilimbi.Factory.Inventory.Web.ItemSettingsLive do
            {:ok, overrides} <- Inventory.item_setting_overrides(scope(socket), company_id(socket)) do
         socket
         |> assign(:settings, settings)
-        |> assign(:form, settings_form(%{
-          "statuses" => Enum.join(overrides.statuses || [], "\n"),
-          "currency" => overrides.default_currency_code || ""
-        }))
+        |> assign(
+          :form,
+          settings_form(%{
+            "statuses" => Enum.join(overrides.statuses || [], "\n"),
+            "currency" => overrides.default_currency_code || ""
+          })
+        )
         |> assign(:error, nil)
       else
         {:error, reason} ->
-          socket |> assign(:settings, nil) |> assign(:form, settings_form(%{})) |> assign(:error, error_text(reason))
+          socket
+          |> assign(:settings, nil)
+          |> assign(:form, settings_form(%{}))
+          |> assign(:error, error_text(reason))
       end
     else
-      socket |> assign(:settings, nil) |> assign(:form, settings_form(%{})) |> assign(:error, "You do not have permission to view item settings.")
+      socket
+      |> assign(:settings, nil)
+      |> assign(:form, settings_form(%{}))
+      |> assign(:error, "You do not have permission to view item settings.")
     end
   end
 
@@ -104,7 +114,8 @@ defmodule Bilimbi.Factory.Inventory.Web.ItemSettingsLive do
     |> Enum.join("; ")
   end
 
-  defp error_text(reason), do: reason |> to_string() |> String.replace("_", " ") |> String.capitalize()
+  defp error_text(reason),
+    do: reason |> to_string() |> String.replace("_", " ") |> String.capitalize()
 
   @impl true
   def render(assigns) do

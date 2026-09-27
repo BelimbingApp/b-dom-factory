@@ -37,7 +37,8 @@ defmodule Bilimbi.Factory.ProductDefinition.Web.DefinitionsLive do
             product -> {:noreply, select(socket, product)}
           end
 
-        _ -> {:noreply, assign(socket, :error, "Product definition not found.")}
+        _ ->
+          {:noreply, assign(socket, :error, "Product definition not found.")}
       end
     else
       {:noreply, assign(socket, :error, "You do not have permission to view definitions.")}
@@ -51,8 +52,11 @@ defmodule Bilimbi.Factory.ProductDefinition.Web.DefinitionsLive do
     with_manage(socket, fn socket ->
       result =
         case Integer.parse(params["item_id"] || "") do
-          {item_id, ""} -> Definitions.create_product(scope(socket), company_id(socket), item_id, params)
-          _ -> {:error, :item_not_found}
+          {item_id, ""} ->
+            Definitions.create_product(scope(socket), company_id(socket), item_id, params)
+
+          _ ->
+            {:error, :item_not_found}
         end
 
       case result do
@@ -65,7 +69,10 @@ defmodule Bilimbi.Factory.ProductDefinition.Web.DefinitionsLive do
            |> put_flash(:success, "Product definition created.")}
 
         {:error, reason} ->
-          {:noreply, socket |> assign(:product_form, product_form(params)) |> assign(:error, error_text(reason))}
+          {:noreply,
+           socket
+           |> assign(:product_form, product_form(params))
+           |> assign(:error, error_text(reason))}
       end
     end)
   end
@@ -74,7 +81,10 @@ defmodule Bilimbi.Factory.ProductDefinition.Web.DefinitionsLive do
     with_manage(socket, fn socket ->
       case socket.assigns.selected do
         %{id: product_id} = product ->
-          attrs = %{"lines" => decode_json(params["lines"]), "process_config" => decode_json(params["process_config"])}
+          attrs = %{
+            "lines" => decode_json(params["lines"]),
+            "process_config" => decode_json(params["process_config"])
+          }
 
           case Definitions.publish_formula(scope(socket), company_id(socket), product_id, attrs) do
             {:ok, _revision} ->
@@ -85,10 +95,14 @@ defmodule Bilimbi.Factory.ProductDefinition.Web.DefinitionsLive do
                |> put_flash(:success, "Formula revision published.")}
 
             {:error, reason} ->
-              {:noreply, socket |> assign(:formula_form, formula_form(params)) |> assign(:error, error_text(reason))}
+              {:noreply,
+               socket
+               |> assign(:formula_form, formula_form(params))
+               |> assign(:error, error_text(reason))}
           end
 
-        _ -> {:noreply, assign(socket, :error, "Select a product definition.")}
+        _ ->
+          {:noreply, assign(socket, :error, "Select a product definition.")}
       end
     end)
   end
@@ -97,7 +111,10 @@ defmodule Bilimbi.Factory.ProductDefinition.Web.DefinitionsLive do
     with_manage(socket, fn socket ->
       case socket.assigns.selected do
         %{id: product_id} = product ->
-          attrs = %{"operations" => decode_json(params["operations"]), "process_config" => decode_json(params["process_config"])}
+          attrs = %{
+            "operations" => decode_json(params["operations"]),
+            "process_config" => decode_json(params["process_config"])
+          }
 
           case Definitions.publish_routing(scope(socket), company_id(socket), product_id, attrs) do
             {:ok, _revision} ->
@@ -108,10 +125,14 @@ defmodule Bilimbi.Factory.ProductDefinition.Web.DefinitionsLive do
                |> put_flash(:success, "Routing revision published.")}
 
             {:error, reason} ->
-              {:noreply, socket |> assign(:routing_form, routing_form(params)) |> assign(:error, error_text(reason))}
+              {:noreply,
+               socket
+               |> assign(:routing_form, routing_form(params))
+               |> assign(:error, error_text(reason))}
           end
 
-        _ -> {:noreply, assign(socket, :error, "Select a product definition.")}
+        _ ->
+          {:noreply, assign(socket, :error, "Select a product definition.")}
       end
     end)
   end
@@ -123,16 +144,24 @@ defmodule Bilimbi.Factory.ProductDefinition.Web.DefinitionsLive do
         socket |> assign(:products, products) |> assign(:items, items)
       else
         {:error, reason} ->
-          socket |> assign(:products, []) |> assign(:items, []) |> assign(:error, error_text(reason))
+          socket
+          |> assign(:products, [])
+          |> assign(:items, [])
+          |> assign(:error, error_text(reason))
       end
     else
-      socket |> assign(:products, []) |> assign(:items, []) |> assign(:error, "You do not have permission to view definitions.")
+      socket
+      |> assign(:products, [])
+      |> assign(:items, [])
+      |> assign(:error, "You do not have permission to view definitions.")
     end
   end
 
   defp select(socket, product) do
-    with {:ok, formulas} <- Definitions.list_formula_revisions(scope(socket), company_id(socket), product.id),
-         {:ok, routings} <- Definitions.list_routing_revisions(scope(socket), company_id(socket), product.id) do
+    with {:ok, formulas} <-
+           Definitions.list_formula_revisions(scope(socket), company_id(socket), product.id),
+         {:ok, routings} <-
+           Definitions.list_routing_revisions(scope(socket), company_id(socket), product.id) do
       socket
       |> assign(:selected, product)
       |> assign(:formulas, formulas)
@@ -146,7 +175,8 @@ defmodule Bilimbi.Factory.ProductDefinition.Web.DefinitionsLive do
   defp with_manage(socket, callback) do
     if can?(socket, @manage),
       do: callback.(socket),
-      else: {:noreply, assign(socket, :error, "You do not have permission to manage definitions.")}
+      else:
+        {:noreply, assign(socket, :error, "You do not have permission to manage definitions.")}
   end
 
   defp can?(socket, capability),
@@ -162,7 +192,8 @@ defmodule Bilimbi.Factory.ProductDefinition.Web.DefinitionsLive do
     do: to_form(Map.merge(%{"lines" => "[]", "process_config" => "{}"}, params), as: :formula)
 
   defp routing_form(params),
-    do: to_form(Map.merge(%{"operations" => "[]", "process_config" => "{}"}, params), as: :routing)
+    do:
+      to_form(Map.merge(%{"operations" => "[]", "process_config" => "{}"}, params), as: :routing)
 
   defp decode_json(value) when is_binary(value) do
     case Jason.decode(value) do
@@ -186,7 +217,8 @@ defmodule Bilimbi.Factory.ProductDefinition.Web.DefinitionsLive do
     |> Enum.join("; ")
   end
 
-  defp error_text(reason), do: reason |> to_string() |> String.replace("_", " ") |> String.capitalize()
+  defp error_text(reason),
+    do: reason |> to_string() |> String.replace("_", " ") |> String.capitalize()
 
   @impl true
   def render(assigns) do

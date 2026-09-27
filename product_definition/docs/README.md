@@ -21,6 +21,8 @@ company's type are refused. `get_resource_type/3`, `list_resource_types/2`,
 `get_resource/3`, and `list_resources/2` read them back. A type's definitions
 can change until a resource uses it. Resource types can retire once their
 resources are retired; retired resources cannot enter new routing revisions.
+Likewise a retired Inventory material cannot enter a new Formula/BOM or
+routing revision, nor a retired unit a new Formula/BOM line.
 
 Nothing in code names a kind of resource. The migration that introduced types
 turned each `kind` a company's resources had used into one of that company's

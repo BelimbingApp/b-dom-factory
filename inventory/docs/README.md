@@ -21,7 +21,7 @@ company is reported as not found. Results are read models (`Item`, `Unit`,
 
 | Area | Operations |
 | --- | --- |
-| Item master | `item_settings/2`, `configure_item_settings/3`, `list_items/3`, `get_item/3`, `get_item_by_sku/3`, `create_item/3` |
+| Item master | `item_settings/2`, `item_setting_overrides/2`, `configure_item_settings/3`, `list_items/3`, `get_item/3`, `get_item_by_sku/3`, `create_item/3` |
 | Units | `list_units/3`, `get_unit/3`, `create_unit/3`, `rename_unit/4`, `retire_unit/3` |
 | Locations | `list_locations/3`, `get_location/3`, `create_location/3` |
 | Material types | `create_material_type/3`, `get_material_type/3`, `list_material_types/3`, `update_material_type/4`, `retire_material_type/3` |
@@ -40,8 +40,9 @@ company is reported as not found. Results are read models (`Item`, `Unit`,
   `factory.inventory.default_currency_code`, resolved for the company and then
   its tenant. Inventory declares them in its contribution provider with no
   default of its own: unconfigured, any non-blank status is accepted and each
-  item names its currency. `item_settings/2` reads what applies;
-  `configure_item_settings/3` writes the two company overrides together.
+  item names its currency. `item_settings/2` reads what applies,
+  `item_setting_overrides/2` reads only the company's own overrides (`nil`
+  where it inherits), and `configure_item_settings/3` writes both together.
 - **Material types.** A company defines material types with property
   definitions, one mechanism shared with Product Definition's resource types
   (`Bilimbi.Factory.Inventory.PropertyDefinition`): key, label, value type
@@ -61,7 +62,8 @@ company is reported as not found. Results are read models (`Item`, `Unit`,
   transactions remain readable.
 - **Unit lifecycle.** A unit's code remains stable; its name can be edited.
   Retiring a unit keeps its historical IDs readable and prevents its use for
-  new materials and conversions.
+  new materials and conversions; a unit that is an active material's native
+  unit is refused as `:unit_in_use`.
 - **Conversions.** One conversion unit equals `factor` native units. Rows are
   immutable, so a changed factor is the next version. The earlier versions
   stay readable, so a converted quantity can name the basis it used.

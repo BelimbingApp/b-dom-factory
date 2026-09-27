@@ -25,7 +25,8 @@ defmodule Bilimbi.Factory.Inventory.Web.UnitsLive do
   @impl true
   def handle_event("new", _, socket) do
     with_manage(socket, fn socket ->
-      {:noreply, socket |> assign(:editing, :new) |> assign(:form, unit_form(%{})) |> assign(:error, nil)}
+      {:noreply,
+       socket |> assign(:editing, :new) |> assign(:form, unit_form(%{})) |> assign(:error, nil)}
     end)
   end
 
@@ -41,10 +42,12 @@ defmodule Bilimbi.Factory.Inventory.Web.UnitsLive do
                |> assign(:form, unit_form(%{"code" => unit.code, "name" => unit.name}))
                |> assign(:error, nil)}
 
-            {:error, reason} -> {:noreply, assign(socket, :error, error_text(reason))}
+            {:error, reason} ->
+              {:noreply, assign(socket, :error, error_text(reason))}
           end
 
-        _ -> {:noreply, assign(socket, :error, "Unit not found.")}
+        _ ->
+          {:noreply, assign(socket, :error, "Unit not found.")}
       end
     end)
   end
@@ -74,7 +77,8 @@ defmodule Bilimbi.Factory.Inventory.Web.UnitsLive do
            |> put_flash(:success, "Unit saved.")}
 
         {:error, reason} ->
-          {:noreply, socket |> assign(:form, unit_form(params)) |> assign(:error, error_text(reason))}
+          {:noreply,
+           socket |> assign(:form, unit_form(params)) |> assign(:error, error_text(reason))}
       end
     end)
   end
@@ -133,7 +137,8 @@ defmodule Bilimbi.Factory.Inventory.Web.UnitsLive do
     |> Enum.join("; ")
   end
 
-  defp error_text(reason), do: reason |> to_string() |> String.replace("_", " ") |> String.capitalize()
+  defp error_text(reason),
+    do: reason |> to_string() |> String.replace("_", " ") |> String.capitalize()
 
   @impl true
   def render(assigns) do

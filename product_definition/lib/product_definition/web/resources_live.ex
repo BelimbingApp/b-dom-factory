@@ -25,23 +25,31 @@ defmodule Bilimbi.Factory.ProductDefinition.Web.ResourcesLive do
   @impl true
   def handle_event("new", _, socket) do
     with_manage(socket, fn socket ->
-      {:noreply, socket |> assign(:editing, :new) |> assign(:form, resource_form(%{})) |> assign(:error, nil)}
+      {:noreply,
+       socket
+       |> assign(:editing, :new)
+       |> assign(:form, resource_form(%{}))
+       |> assign(:error, nil)}
     end)
   end
 
   def handle_event("edit", %{"id" => id}, socket) do
     with_manage(socket, fn socket ->
       with {resource_id, ""} <- Integer.parse(id),
-           {:ok, resource} <- Definitions.get_resource(scope(socket), company_id(socket), resource_id) do
+           {:ok, resource} <-
+             Definitions.get_resource(scope(socket), company_id(socket), resource_id) do
         {:noreply,
          socket
          |> assign(:editing, resource)
-         |> assign(:form, resource_form(%{
-           "code" => resource.code,
-           "name" => resource.name,
-           "resource_type_id" => to_string(resource.resource_type_id),
-           "properties" => Jason.encode!(resource.properties, pretty: true)
-         }))
+         |> assign(
+           :form,
+           resource_form(%{
+             "code" => resource.code,
+             "name" => resource.name,
+             "resource_type_id" => to_string(resource.resource_type_id),
+             "properties" => Jason.encode!(resource.properties, pretty: true)
+           })
+         )
          |> assign(:error, nil)}
       else
         {:error, reason} -> {:noreply, assign(socket, :error, error_text(reason))}
@@ -68,8 +76,15 @@ defmodule Bilimbi.Factory.ProductDefinition.Web.ResourcesLive do
         case socket.assigns.editing do
           :new ->
             case Integer.parse(params["resource_type_id"] || "") do
-              {type_id, ""} -> Definitions.create_resource(scope(socket), company_id(socket), Map.put(attrs, "resource_type_id", type_id))
-              _ -> {:error, :resource_type_not_found}
+              {type_id, ""} ->
+                Definitions.create_resource(
+                  scope(socket),
+                  company_id(socket),
+                  Map.put(attrs, "resource_type_id", type_id)
+                )
+
+              _ ->
+                {:error, :resource_type_not_found}
             end
 
           %{id: id} ->
@@ -89,7 +104,8 @@ defmodule Bilimbi.Factory.ProductDefinition.Web.ResourcesLive do
            |> put_flash(:success, "Resource saved.")}
 
         {:error, reason} ->
-          {:noreply, socket |> assign(:form, resource_form(params)) |> assign(:error, error_text(reason))}
+          {:noreply,
+           socket |> assign(:form, resource_form(params)) |> assign(:error, error_text(reason))}
       end
     end)
   end
@@ -98,13 +114,19 @@ defmodule Bilimbi.Factory.ProductDefinition.Web.ResourcesLive do
     with_manage(socket, fn socket ->
       result =
         case Integer.parse(id) do
-          {resource_id, ""} -> Definitions.retire_resource(scope(socket), company_id(socket), resource_id)
-          _ -> {:error, :resource_not_found}
+          {resource_id, ""} ->
+            Definitions.retire_resource(scope(socket), company_id(socket), resource_id)
+
+          _ ->
+            {:error, :resource_not_found}
         end
 
       case result do
-        {:ok, _resource} -> {:noreply, socket |> load() |> put_flash(:success, "Resource retired.")}
-        {:error, reason} -> {:noreply, assign(socket, :error, error_text(reason))}
+        {:ok, _resource} ->
+          {:noreply, socket |> load() |> put_flash(:success, "Resource retired.")}
+
+        {:error, reason} ->
+          {:noreply, assign(socket, :error, error_text(reason))}
       end
     end)
   end
@@ -115,10 +137,17 @@ defmodule Bilimbi.Factory.ProductDefinition.Web.ResourcesLive do
            {:ok, types} <- Definitions.list_resource_types(scope(socket), company_id(socket)) do
         socket |> assign(:resources, resources) |> assign(:types, types)
       else
-        {:error, reason} -> socket |> assign(:resources, []) |> assign(:types, []) |> assign(:error, error_text(reason))
+        {:error, reason} ->
+          socket
+          |> assign(:resources, [])
+          |> assign(:types, [])
+          |> assign(:error, error_text(reason))
       end
     else
-      socket |> assign(:resources, []) |> assign(:types, []) |> assign(:error, "You do not have permission to view resources.")
+      socket
+      |> assign(:resources, [])
+      |> assign(:types, [])
+      |> assign(:error, "You do not have permission to view resources.")
     end
   end
 
@@ -135,7 +164,12 @@ defmodule Bilimbi.Factory.ProductDefinition.Web.ResourcesLive do
   defp company_id(socket), do: socket.assigns.current_scope.user["company_id"]
 
   defp resource_form(params),
-    do: to_form(Map.merge(%{"code" => "", "name" => "", "resource_type_id" => "", "properties" => "{}"}, params), as: :resource)
+    do:
+      to_form(
+        Map.merge(
+          %{"code" => "", "name" => "", "resource_type_id" => "", "properties" => "{}"},
+          params
+        ), as: :resource)
 
   defp decode_properties(json) when is_binary(json) do
     case Jason.decode(json) do
@@ -159,7 +193,8 @@ defmodule Bilimbi.Factory.ProductDefinition.Web.ResourcesLive do
     |> Enum.join("; ")
   end
 
-  defp error_text(reason), do: reason |> to_string() |> String.replace("_", " ") |> String.capitalize()
+  defp error_text(reason),
+    do: reason |> to_string() |> String.replace("_", " ") |> String.capitalize()
 
   @impl true
   def render(assigns) do
