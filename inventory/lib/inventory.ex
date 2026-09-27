@@ -451,7 +451,7 @@ defmodule Bilimbi.Factory.Inventory do
   unit's own, but not both. A differing unit without evidence is
   `{:error, :variance_required}`; evidence that no difference uses, shared or
   named, is `{:error, :no_variance}`. `get_transaction_balance/3` reads the
-  result per unit and, where conversions apply, across units.
+  result per unit and, in a unit every line was posted in, across units.
   """
   @spec record_transform(Scope.t(), pos_integer(), map(), module()) :: posting_result()
   def record_transform(%Scope{} = scope, company_id, request, authority),
