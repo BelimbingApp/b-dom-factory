@@ -88,7 +88,8 @@ do not account for. The `record_*` docs on the facade define each request.
   a variance entry in that unit, so the glue's mass on a coated roll measured
   by area is an 80 kg variance whose evidence and basis say so, not a hidden
   loss. `variance` carries `evidence` and `reconciliation_basis` shared by
-  every differing unit, or `units` naming a unit's own, or both. Genealogy
+  every differing unit, or `units` naming each differing unit's own, never
+  both. Genealogy
   links are unaffected. A single-unit transform behaves as before.
 - **Balances.** `get_transaction_balance/3` reads a transaction net of its
   corrections: `per_unit` gives each native unit's observed input, output,

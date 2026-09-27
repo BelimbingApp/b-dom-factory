@@ -412,9 +412,12 @@ defmodule Bilimbi.Factory.ProductionExecution.WorkflowTest do
           make(edge, yard, 4, "EDGE-1", "measured", "trim")
         ],
         %{
-          evidence: "Slitter log",
-          reconciliation_basis: "Area in is not measured out",
           units: [
+            %{
+              unit_id: m2.id,
+              evidence: "Slitter log",
+              reconciliation_basis: "Area in is not measured out"
+            },
             %{
               unit_id: roll.id,
               evidence: "Slitter log: three rolls cut",

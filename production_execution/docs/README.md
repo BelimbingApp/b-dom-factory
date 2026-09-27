@@ -35,7 +35,7 @@ both live commands (`source: :live`) and historical imports
 - `variance`: optional Inventory transform evidence, required for every
   native unit whose actual inputs and outputs differ: `evidence` and
   `reconciliation_basis` shared by the differing units, or `units` naming a
-  unit's own (`unit_id`, `evidence`, `reconciliation_basis`), or both.
+  unit's own (`unit_id`, `evidence`, `reconciliation_basis`), not both.
   Accepted only when the execution has both inputs and outputs. Inventory
   records the difference per unit as a variance entry; nothing is converted.
 - A Formula input with `material_hold_rule: %{"hours" => positive_integer}`

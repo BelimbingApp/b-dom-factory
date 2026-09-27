@@ -297,9 +297,12 @@ defmodule Bilimbi.Factory.Inventory.TransformTest do
             }
           ],
           variance: %{
-            evidence: "Length counter at the rewind",
-            reconciliation_basis: "Film area in less coated area out",
             units: [
+              %{
+                unit_id: m2.id,
+                evidence: "Length counter at the rewind",
+                reconciliation_basis: "Film area in less coated area out"
+              },
               %{
                 unit_id: kg.id,
                 evidence: "Glue pump totaliser",
@@ -544,7 +547,10 @@ defmodule Bilimbi.Factory.Inventory.TransformTest do
       [coated] = coating.outputs
 
       # Only the area difference is covered.
-      shared_only = %{coating | variance: Map.delete(coating.variance, :units)}
+      shared_only = %{
+        coating
+        | variance: %{evidence: "Coating run sheet", reconciliation_basis: "area and glue"}
+      }
 
       area_only = %{
         coating
@@ -574,7 +580,7 @@ defmodule Bilimbi.Factory.Inventory.TransformTest do
                  authority
                )
 
-      # Shared evidence that every differing unit's own evidence supersedes is unused.
+      # Evidence named for a unit that balances has no difference to explain.
       exact = %{coated | quantity: 100}
 
       assert {:error, :no_variance} =
@@ -593,14 +599,27 @@ defmodule Bilimbi.Factory.Inventory.TransformTest do
                  %{
                    coating
                    | request_id: "COAT-4",
-                     variance:
-                       %{units: [%{unit_id: roll.id, evidence: "x", reconciliation_basis: "y"}]}
-                       |> Map.merge(
-                         Map.take(coating.variance, [:evidence, :reconciliation_basis])
-                       )
+                     variance: %{
+                       units: [
+                         %{unit_id: roll.id, evidence: "x", reconciliation_basis: "y"}
+                         | coating.variance.units
+                       ]
+                     }
                  },
                  authority
                )
+
+      # Shared and per-unit evidence are exclusive.
+      assert {:error, %Ecto.Changeset{} = changeset} =
+               Inventory.record_transform(
+                 scope,
+                 73,
+                 %{coating | variance: Map.merge(coating.variance, shared_only.variance)},
+                 authority
+               )
+
+      assert %{variance: ["takes evidence and reconciliation_basis, or units, not both"]} =
+               errors_on(changeset)
 
       assert {:error, %Ecto.Changeset{} = changeset} =
                Inventory.record_transform(

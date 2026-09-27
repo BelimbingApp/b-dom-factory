@@ -241,12 +241,15 @@ defmodule Bilimbi.Factory.ProductionExecution.MixCoatSlitScenario do
             "synthetic scale ticket"
           )
         ],
-        # Area differs by 5 m2 under the shared evidence; the 3 kg of waste
-        # is the only mass observed, so kilograms carry their own.
+        # Area differs by 5 m2; the 3 kg of waste is the only mass observed.
+        # Each unit carries its own evidence.
         %{
-          evidence: "synthetic slitting sheet; 1200 to 600+300+300 mm",
-          reconciliation_basis: "5 m2 representative slit difference",
           units: [
+            %{
+              unit_id: m2.id,
+              evidence: "synthetic slitting sheet; 1200 to 600+300+300 mm",
+              reconciliation_basis: "5 m2 representative slit difference"
+            },
             %{
               unit_id: kg.id,
               evidence: "synthetic waste scale ticket",

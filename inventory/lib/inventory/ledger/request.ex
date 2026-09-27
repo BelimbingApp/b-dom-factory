@@ -241,30 +241,27 @@ defmodule Bilimbi.Factory.Inventory.Ledger.Request do
     |> Map.reject(fn {_key, value} -> is_nil(value) end)
   end
 
-  # Variance evidence is shared by every native unit whose inputs and outputs
-  # differ, named per unit under `units`, or both: a named unit takes its
-  # own evidence and the rest take the shared evidence.
+  # Variance evidence is either shared by every native unit whose inputs and
+  # outputs differ, or named per unit under `units`; never both.
   defp variance(:variance, variance) do
-    units = field(variance, :units)
-
-    shared =
-      case {field(variance, :evidence), field(variance, :reconciliation_basis)} do
-        {nil, nil} -> :absent
-        {evidence, basis} -> text_errors(evidence, basis, "needs")
-      end
-
-    named =
-      case units do
-        nil -> []
-        list when is_list(list) -> unit_variance_errors(list)
-        _other -> ["units must be a list"]
-      end
+    shared? = field(variance, :evidence) != nil or field(variance, :reconciliation_basis) != nil
 
     errors =
-      case shared do
-        :absent when units in [nil, []] -> ["needs evidence and reconciliation_basis, or units"]
-        :absent -> named
-        shared -> shared ++ named
+      case {shared?, field(variance, :units)} do
+        {true, nil} ->
+          text_errors(field(variance, :evidence), field(variance, :reconciliation_basis), "needs")
+
+        {true, _units} ->
+          ["takes evidence and reconciliation_basis, or units, not both"]
+
+        {false, [_ | _] = units} ->
+          unit_variance_errors(units)
+
+        {false, units} when units in [nil, []] ->
+          ["needs evidence and reconciliation_basis, or units"]
+
+        {false, _other} ->
+          ["units must be a list"]
       end
 
     Enum.map(errors, &{:variance, &1})
@@ -312,28 +309,29 @@ defmodule Bilimbi.Factory.Inventory.Ledger.Request do
 
   @doc false
   @spec variance(map()) ::
-          %{
-            shared: %{evidence: String.t(), reconciliation_basis: String.t()} | nil,
-            units: %{pos_integer() => %{evidence: String.t(), reconciliation_basis: String.t()}}
-          }
+          {:shared, %{evidence: String.t(), reconciliation_basis: String.t()}}
+          | {:units,
+             %{pos_integer() => %{evidence: String.t(), reconciliation_basis: String.t()}}}
           | nil
   def variance(%{variance: variance}) when is_map(variance) do
-    shared =
-      case {field(variance, :evidence), field(variance, :reconciliation_basis)} do
-        {nil, nil} -> nil
-        {evidence, basis} -> %{evidence: evidence, reconciliation_basis: basis}
-      end
-
-    units =
-      Map.new(field(variance, :units) || [], fn unit ->
-        {field(unit, :unit_id),
+    case field(variance, :units) do
+      nil ->
+        {:shared,
          %{
-           evidence: field(unit, :evidence),
-           reconciliation_basis: field(unit, :reconciliation_basis)
+           evidence: field(variance, :evidence),
+           reconciliation_basis: field(variance, :reconciliation_basis)
          }}
-      end)
 
-    %{shared: shared, units: units}
+      units ->
+        {:units,
+         Map.new(units, fn unit ->
+           {field(unit, :unit_id),
+            %{
+              evidence: field(unit, :evidence),
+              reconciliation_basis: field(unit, :reconciliation_basis)
+            }}
+         end)}
+    end
   end
 
   def variance(_header), do: nil

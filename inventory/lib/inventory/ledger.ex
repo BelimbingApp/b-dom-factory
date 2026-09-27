@@ -597,8 +597,8 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
   # A transform balances per native unit; its observations are compared,
   # never adjusted, and nothing is converted between units. Each unit whose
   # inputs and outputs differ records the difference as a variance entry in
-  # that unit, carrying the evidence named for the unit or else the shared
-  # evidence. Evidence that no difference uses is refused.
+  # that unit, carrying the shared evidence or the evidence named for that
+  # unit. Evidence that no difference uses is refused.
   defp variance(inputs, outputs, evidence) do
     differences =
       for unit_id <- (inputs ++ outputs) |> Enum.map(& &1.native_unit_id) |> Enum.uniq(),
@@ -606,25 +606,26 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
           not Decimal.eq?(difference, 0),
           do: {unit_id, difference}
 
-    shared = evidence && evidence.shared
-    named = (evidence && evidence.units) || %{}
     differing = Enum.map(differences, &elem(&1, 0))
-    unnamed = Enum.reject(differing, &Map.has_key?(named, &1))
+
+    by_unit =
+      case evidence do
+        nil -> %{}
+        {:shared, shared} -> Map.new(differing, &{&1, shared})
+        {:units, named} -> named
+      end
 
     cond do
-      unnamed != [] and shared == nil ->
+      Enum.any?(differing, &(not Map.has_key?(by_unit, &1))) ->
         {:error, :variance_required}
 
-      Enum.any?(Map.keys(named), &(&1 not in differing)) ->
-        {:error, :no_variance}
-
-      shared != nil and unnamed == [] ->
+      evidence != nil and (differing == [] or map_size(by_unit) > length(differing)) ->
         {:error, :no_variance}
 
       true ->
         {:ok,
          for {unit_id, difference} <- differences do
-           %{evidence: evidence, reconciliation_basis: basis} = Map.get(named, unit_id, shared)
+           %{evidence: evidence, reconciliation_basis: basis} = Map.fetch!(by_unit, unit_id)
 
            %{
              role: "variance",

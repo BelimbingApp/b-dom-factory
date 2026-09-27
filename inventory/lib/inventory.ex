@@ -447,9 +447,8 @@ defmodule Bilimbi.Factory.Inventory do
   native unit whose inputs and outputs differ records the difference as a
   variance entry in that unit, and needs `variance` evidence: `evidence` and
   `reconciliation_basis` shared by every differing unit, or `units`, a list
-  of `unit_id`, `evidence`, and `reconciliation_basis` naming a unit's own,
-  or both, in which case a named unit takes its own and the rest take the
-  shared evidence. A differing unit without evidence is
+  of `unit_id`, `evidence`, and `reconciliation_basis` naming each differing
+  unit's own, but not both. A differing unit without evidence is
   `{:error, :variance_required}`; evidence that no difference uses, shared or
   named, is `{:error, :no_variance}`. `get_transaction_balance/3` reads the
   result per unit and, where conversions apply, across units.
