@@ -90,6 +90,10 @@ defmodule Bilimbi.Factory.ProductDefinition.Migrations.AddResourceTypes do
       remove :resource_type_id
     end
 
+    create constraint(:factory_resources, :factory_resources_kind_check,
+             check: "kind IN ('work_centre', 'machine', 'line', 'station')"
+           )
+
     drop table(:factory_resource_types)
   end
 end
