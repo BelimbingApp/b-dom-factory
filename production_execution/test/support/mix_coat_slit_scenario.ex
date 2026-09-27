@@ -1,7 +1,9 @@
-defmodule Bilimbi.Factory.ProductionExecution.SbgScenario do
+defmodule Bilimbi.Factory.ProductionExecution.MixCoatSlitScenario do
   @moduledoc """
-  Synthetic SBG configuration and production facts. The assumptions are listed
-  in docs/sbg-scenario.md; no AX connection or customer Extension is used.
+  Synthetic configuration and production facts for a generic mix, coat, and
+  slit chain at a tape manufacturer ("Company A"). The stand-in values are
+  listed in docs/mix-coat-slit-scenario.md; no source-system connection or
+  customer Extension is used.
   """
 
   alias Bilimbi.Factory.{Inventory, ProductDefinition, ProductionExecution}
@@ -12,7 +14,7 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenario do
 
   def seed!(%{scope: scope, kg: kg, receiving: receiving}) do
     items =
-      for sku <- ~w(BA BOPP ADDITIVE GLUE-WET GLUE-DRY COATED SLIT-600 SLIT-300 TRIM WASTE),
+      for sku <- ~w(RESIN FILM ADDITIVE GLUE-WET GLUE-DRY COATED SLIT-600 SLIT-300 TRIM WASTE),
           into: %{} do
         {:ok, item} = Inventory.create_item(scope, @company, %{sku: sku, title: sku})
         {:ok, _} = Inventory.register_material(scope, @company, item.id, kg.id)
@@ -30,16 +32,16 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenario do
 
     receipts =
       for {sku, quantity, code} <- [
-            {"BA", 70, "BA-LOT-1"},
+            {"RESIN", 70, "RESIN-LOT-1"},
             {"ADDITIVE", 30, "ADDITIVE-LOT-1"},
-            {"BOPP", 50, "BOPP-LOT-1"}
+            {"FILM", 50, "FILM-LOT-1"}
           ],
           into: %{} do
         {:ok, tx} =
           Inventory.record_receipt(
             scope,
             @company,
-            request("SBG-RCV-#{sku}",
+            request("RCV-#{sku}",
               effective_at: at.(32),
               evidence: "synthetic receiving ticket; source=representative fixture",
               lines: [make(items[sku], receiving, quantity, code, "lot")]
@@ -54,10 +56,10 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenario do
         scope,
         kg,
         items["GLUE-DRY"],
-        "SBG-GLUE-BATCH-1",
+        "GLUE-BATCH-1",
         "batch",
         [
-          {"MIX-WET", ~w(BA ADDITIVE), ~w(GLUE-WET), "REACTOR-A"},
+          {"MIX-WET", ~w(RESIN ADDITIVE), ~w(GLUE-WET), "REACTOR-A"},
           {"DRY", ~w(GLUE-WET), ~w(GLUE-DRY), "REACTOR-A"}
         ],
         "adhesive glue"
@@ -68,10 +70,10 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenario do
         scope,
         kg,
         items["COATED"],
-        "SBG-PO-COAT-1",
+        "PO-COAT-1",
         "order",
         [
-          {"COAT", ~w(BOPP GLUE-DRY), ~w(COATED), "COATER-A"}
+          {"COAT", ~w(FILM GLUE-DRY), ~w(COATED), "COATER-A"}
         ],
         "adhesive coating"
       )
@@ -81,7 +83,7 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenario do
         scope,
         kg,
         items["SLIT-600"],
-        "SBG-PO-SLIT-1",
+        "PO-SLIT-1",
         "order",
         [
           {"SLIT", ~w(COATED), ~w(SLIT-600 SLIT-300 TRIM WASTE), "SLITTER-A"}
@@ -94,16 +96,16 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenario do
         scope,
         glue,
         :import,
-        "SBG-AX-GLUE-WET-1",
+        "IMPORT-GLUE-WET-1",
         "MIX-WET",
         at.(30),
         [
-          draw(items["BA"], receiving, 70, receipt_id(receipts, "BA")),
+          draw(items["RESIN"], receiving, 70, receipt_id(receipts, "RESIN")),
           draw(items["ADDITIVE"], receiving, 30, receipt_id(receipts, "ADDITIVE"))
         ],
         [make(items["GLUE-WET"], locations["REACTOR-A"], 98, "GLUE-WET-1", "lot")],
         %{
-          evidence: "synthetic AX extract batch AX-SNAPSHOT-1; wet scale",
+          evidence: "synthetic source-system extract SNAPSHOT-1; wet scale",
           reconciliation_basis: "2 kg representative mixing loss"
         }
       )
@@ -113,13 +115,13 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenario do
         scope,
         glue,
         :import,
-        "SBG-AX-GLUE-DRY-1",
+        "IMPORT-GLUE-DRY-1",
         "DRY",
         at.(29),
         [draw(items["GLUE-WET"], locations["REACTOR-A"], 98, output_id(wet_tx))],
         [make(items["GLUE-DRY"], locations["REACTOR-A"], 80, "GLUE-DRY-1", "lot")],
         %{
-          evidence: "synthetic AX extract batch AX-SNAPSHOT-1; dry scale",
+          evidence: "synthetic source-system extract SNAPSHOT-1; dry scale",
           reconciliation_basis: "18 kg representative drying loss"
         }
       )
@@ -129,11 +131,11 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenario do
         scope,
         coating,
         :live,
-        "SBG-COAT-1",
+        "COAT-1",
         "COAT",
         at.(2),
         [
-          draw(items["BOPP"], receiving, 50, receipt_id(receipts, "BOPP")),
+          draw(items["FILM"], receiving, 50, receipt_id(receipts, "FILM")),
           draw(items["GLUE-DRY"], locations["REACTOR-A"], 80, output_id(dry_tx))
         ],
         [
@@ -148,7 +150,7 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenario do
           )
         ],
         %{
-          evidence: "synthetic coating scale; PO SBG-PO-COAT-1; line COATER-A",
+          evidence: "synthetic coating scale; PO PO-COAT-1; line COATER-A",
           reconciliation_basis: "5 kg representative coating loss"
         }
       )
@@ -158,7 +160,7 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenario do
         scope,
         slitting,
         :live,
-        "SBG-SLIT-1",
+        "SLIT-1",
         "SLIT",
         at.(1),
         [draw(items["COATED"], locations["COATER-A"], 125, output_id(coat_tx))],

@@ -1,11 +1,11 @@
-Code.require_file("support/mr_packaging_scenario.ex", __DIR__)
+Code.require_file("support/foam_pack_scenario.ex", __DIR__)
 
-defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenarioTest do
+defmodule Bilimbi.Factory.ProductionExecution.FoamPackScenarioTest do
   use Bilimbi.Base.Database.DataCase, async: false
 
   alias Bilimbi.Factory.{Inventory, ProductDefinition, ProductionExecution}
   alias Bilimbi.Factory.Inventory.ReceiptMeasurement
-  alias Bilimbi.Factory.ProductionExecution.MrPackagingScenario
+  alias Bilimbi.Factory.ProductionExecution.FoamPackScenario
 
   import Bilimbi.Factory.Inventory.TestFixtures
   import Bilimbi.Factory.ProductionExecution.TestFixtures
@@ -19,7 +19,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenarioTest do
   test "representative lorry receipt reaches identified packs and despatch through Factory",
        context do
     %{scope: scope} = context
-    scenario = MrPackagingScenario.seed!(context)
+    scenario = FoamPackScenario.seed!(context)
     %{items: items, locations: locations, order: order, times: times} = scenario.config
     [receipt | _] = scenario.receipts
     [roll_a, roll_b] = scenario.roll_ids
@@ -118,7 +118,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MrPackagingScenarioTest do
     # The refused attempt made no execution or material transaction; the
     # granted capability allows one early draw with immutable override data.
     assert {:ok, ledger} = Inventory.list_transactions(scope, 73, limit: 100)
-    refute Enum.any?(ledger, &(&1.request_id == "MRP-LA-REFUSED"))
+    refute Enum.any?(ledger, &(&1.request_id == "FP-LA-REFUSED"))
     [{early_lamination, _}, {mature_lamination, _}] = scenario.laminations
 
     assert {:ok, [override]} =

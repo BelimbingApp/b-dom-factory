@@ -24,16 +24,17 @@
   `Authz.scope_actor/1` and decide with `Authz.can/4` on the Scope; never
   accept an actor in override data, and refuse an impersonated Scope. An
   import's historical `approver` is source evidence only (`docs/README.md`).
-- For a customer receipt-to-despatch acceptance case, keep configuration and
-  assumed plant values in a test fixture and its scenario doc, as in
-  `test/support/mr_packaging_scenario.ex` and `docs/mr-packaging-scenario.md`;
-  use Factory facades for postings and leave customer process rules out of
+- For a receipt-to-despatch acceptance case, keep configuration and assumed
+  plant values in a test fixture and its scenario doc, as in
+  `test/support/foam_pack_scenario.ex` and `docs/foam-pack-scenario.md`; use
+  Factory facades for postings and leave customer process rules out of
   Inventory.
-- For SBG glue, coating, and slitting, use the public import and trace path in
-  `test/support/sbg_scenario.ex` and `docs/sbg-scenario.md`. Product Definition
-  accepts only its documented `process_config` keys; list unconfirmed reactor,
-  cleaning, and source fields in that doc until a generic public contract is
-  agreed, rather than hiding them in another configuration key or the fixture.
+- For a mix, coat, and slit chain with historical imports, use the public
+  import and trace path in `test/support/mix_coat_slit_scenario.ex` and
+  `docs/mix-coat-slit-scenario.md`. Product Definition accepts only its
+  documented `process_config` keys; list unconfirmed reactor, cleaning, and
+  source fields in that doc until a generic public contract is agreed, rather
+  than hiding them in another configuration key or the fixture.
 - For a unit's physical size and location, use Inventory identity dimensions
   and `get_identity_positions/3`; for run and input-unit material balances use
   `get_run_yield/3` and `get_unit_yield/3`. Their sources are the existing

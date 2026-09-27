@@ -1,10 +1,10 @@
-Code.require_file("support/sbg_scenario.ex", __DIR__)
+Code.require_file("support/mix_coat_slit_scenario.ex", __DIR__)
 
-defmodule Bilimbi.Factory.ProductionExecution.SbgScenarioTest do
+defmodule Bilimbi.Factory.ProductionExecution.MixCoatSlitScenarioTest do
   use Bilimbi.Base.Database.DataCase, async: true
 
   alias Bilimbi.Factory.{Inventory, ProductDefinition, ProductionExecution}
-  alias Bilimbi.Factory.ProductionExecution.SbgScenario
+  alias Bilimbi.Factory.ProductionExecution.MixCoatSlitScenario
 
   import Bilimbi.Factory.Inventory.TestFixtures
   import Bilimbi.Factory.ProductionExecution.TestFixtures
@@ -15,9 +15,9 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenarioTest do
     context
   end
 
-  test "synthetic SBG glue, coating and slitting reconcile through Factory",
+  test "a synthetic mix, coat and slit chain reconciles through Factory",
        %{scope: scope, kg: kg} = context do
-    scenario = SbgScenario.seed!(context)
+    scenario = MixCoatSlitScenario.seed!(context)
     %{items: items, receipts: receipts, orders: orders, runs: runs} = scenario
     {wet, wet_tx} = runs.wet
     {dry, dry_tx} = runs.dry
@@ -53,13 +53,13 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenarioTest do
 
     assert Enum.map(selected.routing.operations, & &1["code"]) == ~w(MIX-WET DRY)
 
-    assert Decimal.eq?(quantity(wet_tx, items["BA"].id, :input), 70)
+    assert Decimal.eq?(quantity(wet_tx, items["RESIN"].id, :input), 70)
     assert Decimal.eq?(quantity(wet_tx, items["ADDITIVE"].id, :input), 30)
     assert Decimal.eq?(quantity(wet_tx, items["GLUE-WET"].id, :output), 98)
     assert Decimal.eq?(quantity(dry_tx, items["GLUE-WET"].id, :input), 98)
     assert Decimal.eq?(quantity(dry_tx, items["GLUE-DRY"].id, :output), 80)
     assert wet_tx.effective_at == wet.completed_at
-    assert wet_tx.context.order_or_batch == "SBG-GLUE-BATCH-1"
+    assert wet_tx.context.order_or_batch == "GLUE-BATCH-1"
     assert wet_tx.evidence =~ "synthetic fixture"
 
     # Historical retries use the same import contract and retain one material effect.
@@ -75,10 +75,10 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenarioTest do
     assert retried.id == wet.id
     assert retried.inventory_transaction_id == wet_tx.id
 
-    assert Decimal.eq?(quantity(coat_tx, items["BOPP"].id, :input), 50)
+    assert Decimal.eq?(quantity(coat_tx, items["FILM"].id, :input), 50)
     assert Decimal.eq?(quantity(coat_tx, items["GLUE-DRY"].id, :input), 80)
     assert Decimal.eq?(quantity(coat_tx, items["COATED"].id, :output), 125)
-    assert coat_tx.context.order_or_batch == "SBG-PO-COAT-1"
+    assert coat_tx.context.order_or_batch == "PO-COAT-1"
     assert coat_tx.context.work_centre == Integer.to_string(coat.resource_id)
     assert Decimal.eq?(quantity(slit_tx, items["COATED"].id, :input), 125)
     assert Decimal.eq?(quantity(slit_tx, items["SLIT-600"].id, :output), 60)
@@ -158,7 +158,7 @@ defmodule Bilimbi.Factory.ProductionExecution.SbgScenarioTest do
       assert receipt_transactions == MapSet.new(backward.material.receipts, & &1.id)
 
       assert {:ok, forward} =
-               ProductionExecution.trace_forward(scope, 73, elem(receipts["BA"], 1))
+               ProductionExecution.trace_forward(scope, 73, elem(receipts["RESIN"], 1))
 
       assert roll in Enum.map(forward.material.identities, & &1.id)
     end
