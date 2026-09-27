@@ -7,6 +7,11 @@ defmodule Bilimbi.Factory.ProductDefinition.Migrations.AddResourceTypes do
   resource types, with no property definitions, and each resource is moved
   to its type; the vocabulary is data from here on and nothing in code names
   it. The composite reference keeps a resource's type inside its own company.
+
+  Rolling back restores `kind` as each resource's lower-cased type code and
+  recreates `factory_resources_kind_check` as `kind IS NOT NULL`, so the
+  earlier migration's rollback still finds it and company-defined types never
+  abort the rollback; the old fixed vocabulary is not restored.
   """
 
   use Ecto.Migration
@@ -91,7 +96,7 @@ defmodule Bilimbi.Factory.ProductDefinition.Migrations.AddResourceTypes do
     end
 
     create constraint(:factory_resources, :factory_resources_kind_check,
-             check: "kind IN ('work_centre', 'machine', 'line', 'station')"
+             check: "kind IS NOT NULL"
            )
 
     drop table(:factory_resource_types)
