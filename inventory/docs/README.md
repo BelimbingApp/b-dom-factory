@@ -17,7 +17,7 @@ proves them against Factory's composition (see [Integration proof](#integration-
 scope's tenant (Core Company's `get_company/2` decides). A record of another
 company is reported as not found. Results are read models (`Item`, `Unit`,
 `Location`, `Material`, `Conversion`, `StockPosition`, `Transaction`,
-`Entry`, `Identity`), never schemas.
+`Entry`, `Balance`, `Identity`), never schemas.
 
 | Area | Operations |
 | --- | --- |
@@ -29,7 +29,7 @@ company is reported as not found. Results are read models (`Item`, `Unit`,
 | Stock position | `get_stock_position/4` |
 | Ledger postings | `record_receipt/3`, `record_transfer/3`, `record_consumption/3`, `record_correction/3` |
 | Production postings | `record_output/4`, `record_transform/4`, `record_production_consumption/4`, `record_production_correction/4` |
-| Ledger reads | `get_transaction/3`, `list_transactions/3`, `list_corrections/3` |
+| Ledger reads | `get_transaction/3`, `list_transactions/3`, `list_corrections/3`, `get_transaction_balance/3` |
 | Lot and unit genealogy | `get_identity/3`, `get_identity_positions/3`, `trace_backward/3`, `trace_forward/3`, `list_identity_draws/3` |
 | Posting authority | `posting_authority_registered?/1` |
 
@@ -75,11 +75,34 @@ do not account for. The `record_*` docs on the facade define each request.
   `list_corrections/3` reads a transaction's corrections, following
   corrections of corrections.
 - **Transforms.** Inputs, outputs, and their genealogy links commit together.
-  Every line shares one native unit. Observed quantities are never adjusted;
-  when inputs and outputs differ, the transform needs `variance` evidence and
-  a reconciliation basis, and the difference is recorded as a variance entry.
-  For example, 100 kg measured in, 78 kg measured finished, 17 kg derived
-  trim, and 2 kg measured waste leave a 3 kg variance.
+  Observed quantities are never adjusted; when inputs and outputs differ, the
+  transform needs `variance` evidence and a reconciliation basis, and the
+  difference is recorded as a variance entry. For example, 100 kg measured
+  in, 78 kg measured finished, 17 kg derived trim, and 2 kg measured waste
+  leave a 3 kg variance.
+- **Mixed native units.** A transform's lines may be in several native units,
+  as a coating run is (film by area, glue by mass, coated film by area) or a
+  slitting run (one counted roll in, counted rolls and weighed trim out).
+  Each native unit balances on its own, and nothing is converted between
+  units: every unit whose inputs and outputs differ records its difference as
+  a variance entry in that unit, so the glue's mass on a coated roll measured
+  by area is an 80 kg variance whose evidence and basis say so, not a hidden
+  loss. `variance` carries `evidence` and `reconciliation_basis` shared by
+  every differing unit, or `units` naming each differing unit's own, never
+  both. Genealogy
+  links are unaffected. A single-unit transform behaves as before.
+- **Balances.** `get_transaction_balance/3` reads a transaction net of its
+  corrections: `per_unit` gives each native unit's observed input, output,
+  difference, and recorded variance. Accounting balance is separate from
+  measurement agreement: `cross_unit` compares inputs and outputs across
+  units only in a native unit that every line was posted in, natively or as
+  its recorded unit. A recorded line counts at its recorded quantity, and
+  the conversion version it was posted through is named, so film and a
+  coated roll recorded in kilograms give a mass balance that the glue's
+  kilograms enter as recorded. Nothing is converted at read time: a later
+  conversion version never restates a posted balance, and a unit some line
+  was not posted in has no cross-unit balance. No entry records a
+  cross-unit difference.
 
 ## Lot and unit identities
 
@@ -156,7 +179,8 @@ These tests hold Inventory's Phase 4 claims:
 | With no authority registered, every production and transform posting is refused and warehouse postings continue | `test/posting_authority_test.exs` |
 | An Extension cannot register (its declaration fails Inventory's boot) or post production context | `test/posting_authority_test.exs` |
 | Production Execution is the declared authority, and its postings carry actual inputs and outputs, opaque context, and the execution's evidence atomically | `test/posting_boundary_test.exs` (compiled graph), `production_execution/test/execution_test.exs`, `production_execution/test/workflow_test.exs` |
-| Distinct factory workflows (a foam extrude-cure-laminate-cut chain and coil slitting) reconcile from Inventory transactions without changing earlier history | `production_execution/test/workflow_test.exs` |
+| Distinct factory workflows (a foam extrude-cure-laminate-cut chain, coil slitting, and a coating-and-slitting chain mixing area, mass, and counted rolls) reconcile from Inventory transactions without changing earlier history | `production_execution/test/workflow_test.exs` |
+| A transform balances per native unit with a variance per unit, and a cross-unit balance exists only in a unit every line was posted in | `test/transform_test.exs`, `production_execution/test/workflow_test.exs` |
 
 The workflows are test fixtures only; Inventory holds no process rule or
 source mapping for either.
