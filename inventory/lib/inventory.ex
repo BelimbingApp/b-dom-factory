@@ -715,11 +715,11 @@ defmodule Bilimbi.Factory.Inventory do
 
     unless is_nil(statuses) or
              (is_list(statuses) and statuses != [] and
-                Enum.all?(statuses, &(is_binary(&1) and String.trim(&1) != "")) and
+                Enum.all?(statuses, &(is_binary(&1) and &1 != "" and &1 == String.trim(&1))) and
                 statuses == Enum.uniq(statuses)) do
       raise ArgumentError,
             "#{Contributions.item_statuses_key()} for company #{company.id} must be a " <>
-              "non-empty list of distinct non-blank statuses, got: #{inspect(statuses)}"
+              "non-empty list of distinct, non-blank, unpadded statuses, got: #{inspect(statuses)}"
     end
 
     unless is_nil(currency) or (is_binary(currency) and String.length(String.trim(currency)) == 3) do

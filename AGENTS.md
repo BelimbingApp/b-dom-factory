@@ -32,9 +32,7 @@ and phases are Bilimbi's `docs/plans/factory/0000-factory-domain.md` and
   identifiers, schema constants, inclusion lists, or defaults, and a fixture
   carries such a name only as data. Validate a type's values with
   `inventory/lib/inventory/property_definition.ex` and read item statuses and
-  the default currency with `Inventory.item_settings/2`;
-  `.github/scripts/configurable_concepts.sh` refuses the shapes that turn one
-  back into a constant.
+  the default currency with `Inventory.item_settings/2`.
 - Use `ProductDefinition.select_revisions/5` for an order's exact definition
   selection; its facade validates Inventory references through Inventory's public
   API. Do not read either module's private tables from another module.

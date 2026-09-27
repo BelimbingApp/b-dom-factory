@@ -118,6 +118,12 @@ defmodule Bilimbi.Factory.Inventory.CatalogTest do
         Inventory.create_item(scope, 73, %{sku: "A", title: "A"})
       end
 
+      {:ok, _} = Settings.put(Contributions.item_statuses_key(), [" open", "closed"], scope_73)
+
+      assert_raise ArgumentError, ~r/item_statuses for company 73/, fn ->
+        Inventory.create_item(scope, 73, %{sku: "A", title: "A"})
+      end
+
       configure_item_settings!(73, 41, currency: "EURO")
 
       assert_raise ArgumentError, ~r/default_currency_code for company 73/, fn ->
