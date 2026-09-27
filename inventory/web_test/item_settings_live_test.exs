@@ -6,7 +6,9 @@ defmodule BilimbiWeb.FactoryItemSettingsLiveTest do
   alias Bilimbi.Base.Tenancy
   alias Bilimbi.Core.Company.TestFixtures, as: CompanyFixtures
   alias Bilimbi.Core.User.TestFixtures, as: UserFixtures
+  alias Bilimbi.Base.Settings
   alias Bilimbi.Factory.Inventory
+  alias Bilimbi.Factory.Inventory.Contributions
 
   setup do
     UserFixtures.create_user_tables!()
@@ -42,6 +44,34 @@ defmodule BilimbiWeb.FactoryItemSettingsLiveTest do
 
     assert has_element?(view, "#item-settings-error", "Invalid item statuses")
     assert {:ok, %{statuses: ["draft", "released"]}} = Inventory.item_settings(scope, 73)
+  end
+
+  test "an inherited tenant setting is not saved as a company override", %{conn: conn} do
+    grant_capabilities!([
+      "factory.inventory.configuration.view",
+      "factory.inventory.configuration.manage"
+    ])
+
+    tenant = Settings.Scope.tenant(41)
+    {:ok, _} = Settings.put(Contributions.item_statuses_key(), ["draft"], tenant)
+    {:ok, _} = Settings.put(Contributions.default_currency_key(), "USD", tenant)
+
+    on_exit(fn ->
+      Settings.delete(Contributions.item_statuses_key(), tenant)
+      Settings.delete(Contributions.default_currency_key(), tenant)
+    end)
+
+    {:ok, view, _html} = conn |> log_in_as() |> live(~p"/factory/item-settings")
+    assert has_element?(view, "#item-settings-facts", "USD")
+    view |> form("#item-settings-form") |> render_submit()
+
+    {:ok, _} = Settings.put(Contributions.default_currency_key(), "EUR", tenant)
+    {:ok, scope} = Tenancy.scope(41)
+
+    assert {:ok, %{statuses: nil, default_currency_code: nil}} =
+             Inventory.item_setting_overrides(scope, 73)
+
+    assert {:ok, %{default_currency_code: "EUR"}} = Inventory.item_settings(scope, 73)
   end
 
   test "a viewer cannot submit a forged save", %{conn: conn} do

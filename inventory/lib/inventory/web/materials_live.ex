@@ -71,11 +71,7 @@ defmodule Bilimbi.Factory.Inventory.Web.MaterialsLive do
 
   def handle_event("save", %{"material" => params}, socket) do
     with_manage(socket, fn socket ->
-      item_attrs =
-        params
-        |> Map.take(~w(sku title status currency_code description))
-        |> Enum.reject(fn {_key, value} -> value == "" end)
-        |> Map.new()
+      item_attrs = Map.take(params, ~w(sku title status currency_code description))
 
       properties = decode_properties(params["properties"])
 
@@ -84,7 +80,11 @@ defmodule Bilimbi.Factory.Inventory.Web.MaterialsLive do
           :new ->
             with {unit_id, ""} <- Integer.parse(params["native_unit_id"] || ""),
                  {:ok, type_id} <- optional_id(params["material_type_id"]) do
-              Inventory.create_material(scope(socket), company_id(socket), item_attrs, unit_id,
+              Inventory.create_material(
+                scope(socket),
+                company_id(socket),
+                item_attrs |> Enum.reject(fn {_key, value} -> value == "" end) |> Map.new(),
+                unit_id,
                 material_type_id: type_id,
                 properties: properties
               )

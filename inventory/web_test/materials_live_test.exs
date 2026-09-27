@@ -61,8 +61,16 @@ defmodule BilimbiWeb.FactoryMaterialsLiveTest do
     assert material.material_type_id == type.id
 
     render_click(element(view, "button[phx-click='edit'][phx-value-id='#{material.item_id}']"))
-    view |> form("#material-form", material: %{title: "Updated item"}) |> render_submit()
-    assert {:ok, %{title: "Updated item"}} = Inventory.get_item(scope, 73, material.item_id)
+    view
+    |> form("#material-form", material: %{title: "Updated item", description: "Described"})
+    |> render_submit()
+
+    assert {:ok, %{title: "Updated item", description: "Described"}} =
+             Inventory.get_item(scope, 73, material.item_id)
+
+    render_click(element(view, "button[phx-click='edit'][phx-value-id='#{material.item_id}']"))
+    view |> form("#material-form", material: %{description: ""}) |> render_submit()
+    assert {:ok, %{description: nil}} = Inventory.get_item(scope, 73, material.item_id)
 
     render_click(element(view, "button[phx-click='retire'][phx-value-id='#{material.item_id}']"))
     assert has_element?(view, "#materials-table td", "Retired")

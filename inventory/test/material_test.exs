@@ -54,6 +54,20 @@ defmodule Bilimbi.Factory.Inventory.MaterialTest do
       assert {:ok, ^retired} = Inventory.get_unit(scope, 73, alternate.id)
     end
 
+    test "a unit is not retired while an active material is native to it", %{
+      scope: scope,
+      item: item
+    } do
+      {:ok, native} = Inventory.create_unit(scope, 73, %{code: "u1", name: "Unit one"})
+      {:ok, _} = Inventory.register_material(scope, 73, item.id, native.id)
+
+      assert {:error, :unit_in_use} = Inventory.retire_unit(scope, 73, native.id)
+
+      {:ok, _} = Inventory.retire_material(scope, 73, item.id)
+      assert {:ok, %{retired_at: retired_at}} = Inventory.retire_unit(scope, 73, native.id)
+      assert retired_at
+    end
+
     test "registers an item once, in its native unit", %{
       scope: scope,
       item: item,

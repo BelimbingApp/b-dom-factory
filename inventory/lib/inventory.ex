@@ -104,6 +104,31 @@ defmodule Bilimbi.Factory.Inventory do
     end
   end
 
+  @doc """
+  The company's own item settings overrides: each field is the company's
+  value, or `nil` where the company inherits its tenant's setting.
+  """
+  @spec item_setting_overrides(Scope.t(), pos_integer()) ::
+          {:ok, Schemas.Item.settings()} | {:error, :company_not_found}
+  def item_setting_overrides(%Scope{} = scope, company_id) do
+    with {:ok, company} <- live_company_summary(scope, company_id) do
+      setting_scope = Settings.Scope.company(company.id, company.tenant_id)
+      settings = item_settings_of(company)
+
+      {:ok,
+       %{
+         statuses:
+           if(Settings.overridden?(Contributions.item_statuses_key(), setting_scope),
+             do: settings.statuses
+           ),
+         default_currency_code:
+           if(Settings.overridden?(Contributions.default_currency_key(), setting_scope),
+             do: settings.default_currency_code
+           )
+       }}
+    end
+  end
+
   defp validate_item_settings(statuses, currency) do
     cond do
       not (is_nil(statuses) or
@@ -257,11 +282,15 @@ defmodule Bilimbi.Factory.Inventory do
     end
   end
 
-  @doc "Retires a unit while preserving the IDs in existing conversions and postings."
+  @doc """
+  Retires a unit while preserving the IDs in existing conversions and postings.
+  A unit that is an active material's native unit is refused as `:unit_in_use`.
+  """
   def retire_unit(%Scope{} = scope, company_id, unit_id) do
     with :ok <- live_company(scope, company_id),
          {:ok, unit} <- fetch(Schemas.Unit, company_id, unit_id, :unit_not_found),
          :ok <- active_unit(unit),
+         :ok <- no_active_native_materials(unit),
          {:ok, retired} <-
            unit
            |> Ecto.Changeset.change(
@@ -274,6 +303,18 @@ defmodule Bilimbi.Factory.Inventory do
 
   defp active_unit(%{retired_at: nil}), do: :ok
   defp active_unit(_), do: {:error, :unit_retired}
+
+  defp no_active_native_materials(unit) do
+    if Repo.exists?(
+         from(m in Schemas.Material,
+           where:
+             m.company_id == ^unit.company_id and m.native_unit_id == ^unit.id and
+               is_nil(m.retired_at)
+         )
+       ),
+       do: {:error, :unit_in_use},
+       else: :ok
+  end
 
   # ============================================================================
   # Stock locations

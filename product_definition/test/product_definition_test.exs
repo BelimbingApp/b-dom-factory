@@ -306,6 +306,40 @@ defmodule Bilimbi.Factory.ProductDefinitionTest do
     end
   end
 
+  test "a formula or routing refuses a retired material", %{scope: scope} do
+    {:ok, input} = Inventory.create_item(scope, 73, %{sku: "IN", title: "In"})
+    {:ok, output} = Inventory.create_item(scope, 73, %{sku: "OUT", title: "Out"})
+    {:ok, unit} = Inventory.create_unit(scope, 73, %{code: "pcs", name: "Pieces"})
+    {:ok, _} = Inventory.register_material(scope, 73, input.id, unit.id)
+    {:ok, _} = Inventory.retire_material(scope, 73, input.id)
+    {:ok, product} = Definitions.create_product(scope, 73, output.id, %{code: "OUT", name: "Out"})
+    {:ok, type} = Definitions.create_resource_type(scope, 73, %{code: "TYPE", name: "Type"})
+
+    {:ok, resource} =
+      Definitions.create_resource(scope, 73, %{code: "R", name: "R", resource_type_id: type.id})
+
+    assert {:error, :material_retired} =
+             Definitions.publish_formula(scope, 73, product.id, %{
+               lines: [
+                 %{item_id: input.id, unit_id: unit.id, role: "input", quantity: 1},
+                 %{item_id: output.id, unit_id: unit.id, role: "output", quantity: 1}
+               ]
+             })
+
+    assert {:error, :material_retired} =
+             Definitions.publish_routing(scope, 73, product.id, %{
+               operations: [
+                 %{
+                   code: "OP",
+                   sequence: 1,
+                   inputs: [input.id],
+                   outputs: [output.id],
+                   allowed_resource_ids: [resource.id]
+                 }
+               ]
+             })
+  end
+
   test "definitions refuse foreign items and resources across company boundaries", %{
     scope: scope,
     other: other

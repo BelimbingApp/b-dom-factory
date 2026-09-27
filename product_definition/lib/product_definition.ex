@@ -539,8 +539,10 @@ defmodule Bilimbi.Factory.ProductDefinition do
 
   defp each_item(scope, company_id, ids) do
     Enum.reduce_while(Enum.uniq(ids), :ok, fn id, _ ->
-      case Inventory.get_item(scope, company_id, id) do
-        {:ok, _} -> {:cont, :ok}
+      case Inventory.get_material(scope, company_id, id) do
+        {:ok, %{retired_at: nil}} -> {:cont, :ok}
+        {:ok, _} -> {:halt, {:error, :material_retired}}
+        {:error, :material_not_found} -> {:cont, :ok}
         error -> {:halt, error}
       end
     end)

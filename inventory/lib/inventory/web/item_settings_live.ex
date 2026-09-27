@@ -64,16 +64,16 @@ defmodule Bilimbi.Factory.Inventory.Web.ItemSettingsLive do
 
   defp load(socket) do
     if can?(socket, @view) do
-      case Inventory.item_settings(scope(socket), company_id(socket)) do
-        {:ok, settings} ->
-          socket
-          |> assign(:settings, settings)
-          |> assign(:form, settings_form(%{
-            "statuses" => Enum.join(settings.statuses || [], "\n"),
-            "currency" => settings.default_currency_code || ""
-          }))
-          |> assign(:error, nil)
-
+      with {:ok, settings} <- Inventory.item_settings(scope(socket), company_id(socket)),
+           {:ok, overrides} <- Inventory.item_setting_overrides(scope(socket), company_id(socket)) do
+        socket
+        |> assign(:settings, settings)
+        |> assign(:form, settings_form(%{
+          "statuses" => Enum.join(overrides.statuses || [], "\n"),
+          "currency" => overrides.default_currency_code || ""
+        }))
+        |> assign(:error, nil)
+      else
         {:error, reason} ->
           socket |> assign(:settings, nil) |> assign(:form, settings_form(%{})) |> assign(:error, error_text(reason))
       end
@@ -111,15 +111,15 @@ defmodule Bilimbi.Factory.Inventory.Web.ItemSettingsLive do
 
         <p :if={@error} id="item-settings-error" role="alert" class="mt-4 text-sm text-danger-ink">{@error}</p>
 
-        <.card id="item-settings-card" title="Company defaults" class="mt-5">
+        <.card id="item-settings-card" title="Company overrides" class="mt-5">
           <.form :if={@can_manage?} for={@form} id="item-settings-form" phx-submit="save" class="space-y-4 p-4">
             <.input field={@form[:statuses]} type="textarea" label="Item statuses" hint="One status per line. The first is the default. Leave empty to inherit the tenant setting or allow any status." />
             <.input field={@form[:currency]} label="Default currency" hint="Three-letter currency code. Leave empty to inherit or require a currency on each item." />
             <.button type="submit" variant="primary">Save settings</.button>
           </.form>
-          <.list :if={not @can_manage? and @settings} id="item-settings-facts">
-            <:item title="Item statuses">{Enum.join(@settings.statuses || [], ", ")}</:item>
-            <:item title="Default currency">{@settings.default_currency_code || "Not set"}</:item>
+          <.list :if={@settings} id="item-settings-facts">
+            <:item title="Effective item statuses">{Enum.join(@settings.statuses || [], ", ")}</:item>
+            <:item title="Effective default currency">{@settings.default_currency_code || "Not set"}</:item>
           </.list>
         </.card>
       </.page>
