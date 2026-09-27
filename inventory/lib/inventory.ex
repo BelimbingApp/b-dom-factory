@@ -21,6 +21,7 @@ defmodule Bilimbi.Factory.Inventory do
   alias Bilimbi.Base.Repo
   alias Bilimbi.Base.Tenancy.Scope
   alias Bilimbi.Core.Company
+  alias Bilimbi.Factory.Inventory.Balance
   alias Bilimbi.Factory.Inventory.Conversion
   alias Bilimbi.Factory.Inventory.Genealogy
   alias Bilimbi.Factory.Inventory.Identity
@@ -438,14 +439,20 @@ defmodule Bilimbi.Factory.Inventory do
   `authority`.
 
   Input and output lines take the receipt line fields; an output may add an
-  opaque `output_role`, such as finished, trim, or waste. Every input and
-  output must share one native unit, the unit the transform balances in.
+  opaque `output_role`, such as finished, trim, or waste. Lines may be in
+  several native units; the transform balances each native unit on its own,
+  and nothing is converted between units.
 
-  Observed quantities are kept as recorded and never adjusted to agree. When
-  inputs and outputs differ, `variance` (`evidence` and
-  `reconciliation_basis`) is required and the difference is recorded as a
-  variance entry; without it the transform is `{:error, :variance_required}`,
-  and a variance with no difference is `{:error, :no_variance}`.
+  Observed quantities are kept as recorded and never adjusted to agree. Each
+  native unit whose inputs and outputs differ records the difference as a
+  variance entry in that unit, and needs `variance` evidence: `evidence` and
+  `reconciliation_basis` shared by every differing unit, or `units`, a list
+  of `unit_id`, `evidence`, and `reconciliation_basis` naming a unit's own,
+  or both, in which case a named unit takes its own and the rest take the
+  shared evidence. A differing unit without evidence is
+  `{:error, :variance_required}`; evidence that no difference uses, shared or
+  named, is `{:error, :no_variance}`. `get_transaction_balance/3` reads the
+  result per unit and, where conversions apply, across units.
   """
   @spec record_transform(Scope.t(), pos_integer(), map(), module()) :: posting_result()
   def record_transform(%Scope{} = scope, company_id, request, authority),
@@ -500,6 +507,23 @@ defmodule Bilimbi.Factory.Inventory do
     with :ok <- live_company(scope, company_id),
          {:ok, transaction} <- Ledger.get(company_id, transaction_id),
          do: {:ok, Ledger.corrections(company_id, transaction.id)}
+  end
+
+  @doc """
+  Reads a transaction's material balance, net of its corrections.
+
+  `per_unit` balances each native unit on its own: observed input, output,
+  their difference, and the variance the transaction recorded in that unit.
+  `cross_unit` compares inputs and outputs across units only in a native unit
+  that every line has an explicit item-level conversion to (or is native in),
+  naming each conversion version used; see `Bilimbi.Factory.Inventory.Balance`.
+  """
+  @spec get_transaction_balance(Scope.t(), pos_integer(), pos_integer()) ::
+          {:ok, Balance.t()} | {:error, :company_not_found | :transaction_not_found}
+  def get_transaction_balance(%Scope{} = scope, company_id, transaction_id) do
+    with :ok <- live_company(scope, company_id),
+         {:ok, transaction} <- Ledger.get(company_id, transaction_id),
+         do: {:ok, Ledger.balance(company_id, transaction)}
   end
 
   @spec get_transaction(Scope.t(), pos_integer(), pos_integer()) ::

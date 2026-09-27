@@ -12,14 +12,37 @@ defmodule Bilimbi.Factory.ProductionExecution.MixCoatSlitScenario do
 
   @company 73
 
+  # Glue, additives, and waste are stocked by mass; film, coated film, slit
+  # rolls, and trim by area. Coating and slitting therefore mix native units.
   def seed!(%{scope: scope, kg: kg, receiving: receiving}) do
+    {:ok, m2} = Inventory.create_unit(scope, @company, %{code: "m2", name: "Square metre"})
+
+    units = %{
+      "RESIN" => kg,
+      "ADDITIVE" => kg,
+      "GLUE-WET" => kg,
+      "GLUE-DRY" => kg,
+      "WASTE" => kg,
+      "FILM" => m2,
+      "COATED" => m2,
+      "SLIT-600" => m2,
+      "SLIT-300" => m2,
+      "TRIM" => m2
+    }
+
     items =
-      for sku <- ~w(RESIN FILM ADDITIVE GLUE-WET GLUE-DRY COATED SLIT-600 SLIT-300 TRIM WASTE),
-          into: %{} do
+      for {sku, unit} <- units, into: %{} do
         {:ok, item} = Inventory.create_item(scope, @company, %{sku: sku, title: sku})
-        {:ok, _} = Inventory.register_material(scope, @company, item.id, kg.id)
+        {:ok, _} = Inventory.register_material(scope, @company, item.id, unit.id)
         {sku, item}
       end
+
+    # Representative area-to-mass conversions for the film and the coated
+    # roll only: 1 kg of film is 10 m2 and 1 kg of coated film is 4 m2. Slit
+    # rolls and trim have none, so their slitting run has no cross-unit
+    # balance.
+    {:ok, _} = Inventory.define_conversion(scope, @company, items["FILM"].id, kg.id, "10")
+    {:ok, _} = Inventory.define_conversion(scope, @company, items["COATED"].id, kg.id, "4")
 
     locations =
       for code <- ~w(REACTOR-A COATER-A SLITTER-A), into: %{} do
@@ -34,7 +57,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MixCoatSlitScenario do
       for {sku, quantity, code} <- [
             {"RESIN", 70, "RESIN-LOT-1"},
             {"ADDITIVE", 30, "ADDITIVE-LOT-1"},
-            {"FILM", 50, "FILM-LOT-1"}
+            {"FILM", 500, "FILM-LOT-1"}
           ],
           into: %{} do
         {:ok, tx} =
@@ -54,7 +77,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MixCoatSlitScenario do
     glue =
       order!(
         scope,
-        kg,
+        units,
         items["GLUE-DRY"],
         "GLUE-BATCH-1",
         "batch",
@@ -68,7 +91,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MixCoatSlitScenario do
     coating =
       order!(
         scope,
-        kg,
+        units,
         items["COATED"],
         "PO-COAT-1",
         "order",
@@ -81,7 +104,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MixCoatSlitScenario do
     slitting =
       order!(
         scope,
-        kg,
+        units,
         items["SLIT-600"],
         "PO-SLIT-1",
         "order",
@@ -135,23 +158,32 @@ defmodule Bilimbi.Factory.ProductionExecution.MixCoatSlitScenario do
         "COAT",
         at.(2),
         [
-          draw(items["FILM"], receiving, 50, receipt_id(receipts, "FILM")),
+          draw(items["FILM"], receiving, 500, receipt_id(receipts, "FILM")),
           draw(items["GLUE-DRY"], locations["REACTOR-A"], 80, output_id(dry_tx))
         ],
         [
           make(
             items["COATED"],
             locations["COATER-A"],
-            125,
+            500,
             "COATED-ROLL-1",
             "unit",
             "measured",
             "good"
           )
         ],
+        # Area balances exactly. The glue's 80 kg has no mass output to
+        # balance against, because the coated roll is measured by area, so
+        # it is a variance in kilograms with its own evidence.
         %{
-          evidence: "synthetic coating scale; PO PO-COAT-1; line COATER-A",
-          reconciliation_basis: "5 kg representative coating loss"
+          units: [
+            %{
+              unit_id: kg.id,
+              evidence: "synthetic glue pump totaliser; PO PO-COAT-1; line COATER-A",
+              reconciliation_basis:
+                "80 kg dry glue applied to the film; the coated roll is measured by area, not weighed"
+            }
+          ]
         }
       )
 
@@ -163,12 +195,12 @@ defmodule Bilimbi.Factory.ProductionExecution.MixCoatSlitScenario do
         "SLIT-1",
         "SLIT",
         at.(1),
-        [draw(items["COATED"], locations["COATER-A"], 125, output_id(coat_tx))],
+        [draw(items["COATED"], locations["COATER-A"], 500, output_id(coat_tx))],
         [
           make(
             items["SLIT-600"],
             locations["SLITTER-A"],
-            60,
+            250,
             "SLIT-600-1",
             "unit",
             "measured",
@@ -178,7 +210,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MixCoatSlitScenario do
           make(
             items["SLIT-300"],
             locations["SLITTER-A"],
-            30,
+            125,
             "SLIT-300-1",
             "unit",
             "measured",
@@ -188,7 +220,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MixCoatSlitScenario do
           make(
             items["TRIM"],
             locations["SLITTER-A"],
-            30,
+            120,
             "TRIM-1",
             "lot",
             "derived",
@@ -206,9 +238,19 @@ defmodule Bilimbi.Factory.ProductionExecution.MixCoatSlitScenario do
             "synthetic scale ticket"
           )
         ],
+        # Area differs by 5 m2 under the shared evidence; the 3 kg of waste
+        # is the only mass observed, so kilograms carry their own.
         %{
           evidence: "synthetic slitting sheet; 1200 to 600+300+300 mm",
-          reconciliation_basis: "2 kg representative slit difference"
+          reconciliation_basis: "5 m2 representative slit difference",
+          units: [
+            %{
+              unit_id: kg.id,
+              evidence: "synthetic waste scale ticket",
+              reconciliation_basis:
+                "waste is weighed; the coated roll and slit rolls are measured by area"
+            }
+          ]
         }
       )
 
@@ -227,7 +269,7 @@ defmodule Bilimbi.Factory.ProductionExecution.MixCoatSlitScenario do
     }
   end
 
-  defp order!(scope, kg, item, code, kind, operations, process_family) do
+  defp order!(scope, units, item, code, kind, operations, process_family) do
     {:ok, product} =
       ProductDefinition.create_product(scope, @company, item.id, %{code: code, name: code})
 
@@ -236,7 +278,12 @@ defmodule Bilimbi.Factory.ProductionExecution.MixCoatSlitScenario do
           {role, skus} <- [{"input", inputs}, {"output", outputs}],
           sku <- skus,
           uniq: true,
-          do: %{item_id: get_item!(scope, sku).id, unit_id: kg.id, role: role, quantity: 1}
+          do: %{
+            item_id: get_item!(scope, sku).id,
+            unit_id: units[sku].id,
+            role: role,
+            quantity: 1
+          }
 
     {:ok, formula} =
       ProductDefinition.publish_formula(scope, @company, product.id, %{

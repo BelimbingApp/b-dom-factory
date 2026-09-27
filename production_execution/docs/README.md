@@ -29,10 +29,15 @@ both live commands (`source: :live`) and historical imports
   positive `quantity`, `observation`, and optional `unit_id`,
   `conversion_version`, `evidence`, `output_role`, `identity_id` on inputs,
   and `identity` on outputs. Items must belong to the selected operation.
-  Inventory validates stock, units, and conversions.
-- `variance`: optional Inventory transform evidence with `evidence` and
-  `reconciliation_basis`; required when actual inputs and outputs differ.
-  Accepted only when the execution has both inputs and outputs.
+  Inventory validates stock, units, and conversions. Lines may mix native
+  units, as coating (film by area, glue by mass) and slitting (counted rolls,
+  weighed trim) do; Inventory balances each native unit on its own.
+- `variance`: optional Inventory transform evidence, required for every
+  native unit whose actual inputs and outputs differ: `evidence` and
+  `reconciliation_basis` shared by the differing units, or `units` naming a
+  unit's own (`unit_id`, `evidence`, `reconciliation_basis`), or both.
+  Accepted only when the execution has both inputs and outputs. Inventory
+  records the difference per unit as a variance entry; nothing is converted.
 - A Formula input with `material_hold_rule: %{"hours" => positive_integer}`
   (or a Formula or routing `process_config.material_hold_rules` entry keyed by
   the input item ID; the longest applicable minimum governs)
@@ -84,7 +89,10 @@ material ancestry.
 transaction: one group per native unit, each with that unit, input, product,
 trim, waste, and signed variance. A single-unit run has one group; a run that
 mixes kilograms and litres has two, and quantities are never converted between
-units. Product includes output roles other than `trim` and `waste`. Each
+units. `cross_unit` is Inventory's `get_transaction_balance/3` agreement
+across units: present only in a unit every line has an explicit item-level
+conversion to, naming the conversion versions used, and empty otherwise.
+Product includes output roles other than `trim` and `waste`. Each
 correction of the run's transaction, and each correction of those corrections
 (`Inventory.list_corrections/3`), nets into the side of the run entry it adjusts,
 so yields agree with `Inventory.get_identity_positions/3`. `corrected` is true

@@ -241,22 +241,99 @@ defmodule Bilimbi.Factory.Inventory.Ledger.Request do
     |> Map.reject(fn {_key, value} -> is_nil(value) end)
   end
 
+  # Variance evidence is shared by every native unit whose inputs and outputs
+  # differ, named per unit under `units`, or both: a named unit takes its
+  # own evidence and the rest take the shared evidence.
   defp variance(:variance, variance) do
-    Enum.flat_map([:evidence, :reconciliation_basis], fn key ->
-      case variance[key] || variance[Atom.to_string(key)] do
-        value when is_binary(value) and value != "" and byte_size(value) <= @text_limit -> []
-        _other -> [variance: "needs #{key}"]
+    units = field(variance, :units)
+
+    shared =
+      case {field(variance, :evidence), field(variance, :reconciliation_basis)} do
+        {nil, nil} -> :absent
+        {evidence, basis} -> text_errors(evidence, basis, "needs")
       end
-    end)
+
+    named =
+      case units do
+        nil -> []
+        list when is_list(list) -> unit_variance_errors(list)
+        _other -> ["units must be a list"]
+      end
+
+    errors =
+      case shared do
+        :absent when units in [nil, []] -> ["needs evidence and reconciliation_basis, or units"]
+        :absent -> named
+        shared -> shared ++ named
+      end
+
+    Enum.map(errors, &{:variance, &1})
   end
 
+  defp unit_variance_errors(units) do
+    errors =
+      units
+      |> Enum.with_index(1)
+      |> Enum.flat_map(fn
+        {unit, position} when is_map(unit) ->
+          unit_id = field(unit, :unit_id)
+
+          id_errors =
+            if is_integer(unit_id) and unit_id > 0,
+              do: [],
+              else: ["unit #{position} needs unit_id"]
+
+          id_errors ++
+            text_errors(
+              field(unit, :evidence),
+              field(unit, :reconciliation_basis),
+              "unit #{position} needs"
+            )
+
+        {_unit, position} ->
+          ["unit #{position} must be a map"]
+      end)
+
+    ids = for unit <- units, is_map(unit), do: field(unit, :unit_id)
+
+    if length(Enum.uniq(ids)) == length(ids),
+      do: errors,
+      else: errors ++ ["units must name each unit once"]
+  end
+
+  defp text_errors(evidence, basis, prefix) do
+    for {key, value} <- [evidence: evidence, reconciliation_basis: basis],
+        not (is_binary(value) and value != "" and byte_size(value) <= @text_limit),
+        do: "#{prefix} #{key}"
+  end
+
+  defp field(map, key) when is_map(map), do: map[key] || map[Atom.to_string(key)]
+  defp field(_other, _key), do: nil
+
   @doc false
-  @spec variance(map()) :: %{evidence: String.t(), reconciliation_basis: String.t()} | nil
+  @spec variance(map()) ::
+          %{
+            shared: %{evidence: String.t(), reconciliation_basis: String.t()} | nil,
+            units: %{pos_integer() => %{evidence: String.t(), reconciliation_basis: String.t()}}
+          }
+          | nil
   def variance(%{variance: variance}) when is_map(variance) do
-    %{
-      evidence: variance[:evidence] || variance["evidence"],
-      reconciliation_basis: variance[:reconciliation_basis] || variance["reconciliation_basis"]
-    }
+    shared =
+      case {field(variance, :evidence), field(variance, :reconciliation_basis)} do
+        {nil, nil} -> nil
+        {evidence, basis} -> %{evidence: evidence, reconciliation_basis: basis}
+      end
+
+    units =
+      Map.new(field(variance, :units) || [], fn unit ->
+        {field(unit, :unit_id),
+         %{
+           evidence: field(unit, :evidence),
+           reconciliation_basis: field(unit, :reconciliation_basis)
+         }}
+      end)
+
+    %{shared: shared, units: units}
   end
 
   def variance(_header), do: nil

@@ -16,7 +16,9 @@ defmodule Bilimbi.Factory.ProductionExecution.Yield do
                Inventory.get_transaction(scope, company_id, execution.inventory_transaction_id),
              {:ok, corrections} <-
                Inventory.list_corrections(scope, company_id, transaction.id),
-             do: {:ok, summarize(execution, transaction, corrections, nil)}
+             {:ok, balance} <-
+               Inventory.get_transaction_balance(scope, company_id, transaction.id),
+             do: {:ok, summarize(execution, transaction, corrections, balance, nil)}
     end
   end
 
@@ -41,16 +43,19 @@ defmodule Bilimbi.Factory.ProductionExecution.Yield do
             Inventory.get_transaction(scope, company_id, execution.inventory_transaction_id)
 
           {:ok, corrections} = Inventory.list_corrections(scope, company_id, transaction.id)
-          summarize(execution, transaction, corrections, identity_id)
+          {:ok, balance} = Inventory.get_transaction_balance(scope, company_id, transaction.id)
+          summarize(execution, transaction, corrections, balance, identity_id)
         end)
 
       {:ok, %{identity: identity, runs: runs}}
     end
   end
 
-  # Balances are grouped by native unit and never converted between units.
-  # A correction entry nets into the side of the run entry it adjusts.
-  defp summarize(execution, transaction, corrections, identity_id) do
+  # Balances are grouped by native unit and never converted between units;
+  # Inventory's cross-unit balance is carried as read, so a run only has one
+  # where every line has an explicit conversion. A correction entry nets
+  # into the side of the run entry it adjusts.
+  defp summarize(execution, transaction, corrections, balance, identity_id) do
     original = Enum.filter(transaction.entries, &(&1.role in [:stock, :variance]))
 
     adjustments =
@@ -83,7 +88,8 @@ defmodule Bilimbi.Factory.ProductionExecution.Yield do
       resource_id: execution.resource_id,
       corrected: corrections != [],
       correction_transaction_ids: Enum.map(corrections, & &1.id),
-      balances: balances
+      balances: balances,
+      cross_unit: balance.cross_unit
     }
   end
 

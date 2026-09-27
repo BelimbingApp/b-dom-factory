@@ -35,6 +35,12 @@
   documented `process_config` keys; list unconfirmed reactor, cleaning, and
   source fields in that doc until a generic public contract is agreed, rather
   than hiding them in another configuration key or the fixture.
+- For a run that mixes native units (film by area, glue by mass, counted
+  rolls), pass each line in its own unit and give `variance.units` evidence
+  per differing unit; read `get_run_yield/3`'s `balances` per unit and its
+  `cross_unit` from Inventory. Do not convert lines to one unit before posting
+  or compute a cross-unit figure here: `inventory/lib/inventory/balance.ex`
+  defines when one exists.
 - For a unit's physical size and location, use Inventory identity dimensions
   and `get_identity_positions/3`; for run and input-unit material balances use
   `get_run_yield/3` and `get_unit_yield/3`. Their sources are the existing

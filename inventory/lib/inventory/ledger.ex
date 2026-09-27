@@ -13,6 +13,7 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
   import Ecto.Query
 
   alias Bilimbi.Base.Repo
+  alias Bilimbi.Factory.Inventory.Balance
   alias Bilimbi.Factory.Inventory.Entry
   alias Bilimbi.Factory.Inventory.Dimension
   alias Bilimbi.Factory.Inventory.Ledger.Request
@@ -35,7 +36,6 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
           | :conversion_not_found
           | :transaction_not_found
           | :insufficient_stock
-          | :mixed_native_units
           | :variance_required
           | :no_variance
           | :identity_not_found
@@ -193,6 +193,133 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
         unit: Unit.from_schema(unit)
       }
     end)
+  end
+
+  # ============================================================================
+  # Balance
+  # ============================================================================
+
+  @doc "The transaction's balance net of its corrections: per native unit, and across units where every line converts."
+  @spec balance(pos_integer(), Transaction.t()) :: Balance.t()
+  def balance(company_id, %Transaction{} = transaction) do
+    corrections = corrections(company_id, transaction.id)
+    stock = Enum.filter(transaction.entries, &(&1.role == :stock))
+    variances = Enum.filter(transaction.entries, &(&1.role == :variance))
+
+    # A correction entry nets into the side of the entry it adjusts: the one
+    # for the same item and identity.
+    sided =
+      Enum.map(stock, &{side(&1), &1}) ++
+        for correction <- corrections, entry <- correction.entries, entry.role == :stock do
+          case Enum.find(
+                 stock,
+                 &(&1.item_id == entry.item_id and &1.identity_id == entry.identity_id)
+               ) do
+            nil -> {side(entry), entry}
+            adjusted -> {side(adjusted), entry}
+          end
+        end
+
+    units = sided |> Enum.map(fn {_side, entry} -> entry.native_unit end) |> Enum.uniq_by(& &1.id)
+
+    per_unit =
+      for unit <- units do
+        own = Enum.filter(sided, fn {_side, entry} -> entry.native_unit.id == unit.id end)
+        input = Decimal.negate(sum(own, :input, & &1.native_quantity))
+        output = sum(own, :output, & &1.native_quantity)
+
+        %{
+          unit: unit,
+          input: input,
+          output: output,
+          difference: Decimal.sub(input, output),
+          variance:
+            variances
+            |> Enum.filter(&(&1.native_unit.id == unit.id))
+            |> Enum.map(& &1.native_quantity)
+            |> Enum.reduce(Decimal.new(0), &Decimal.add/2)
+        }
+      end
+
+    %Balance{
+      transaction_id: transaction.id,
+      per_unit: per_unit,
+      cross_unit: if(length(units) > 1, do: cross_unit(company_id, sided, units), else: []),
+      correction_transaction_ids: Enum.map(corrections, & &1.id)
+    }
+  end
+
+  defp side(entry), do: if(Decimal.negative?(entry.native_quantity), do: :input, else: :output)
+
+  defp sum(sided, side, convert) do
+    for {^side, entry} <- sided, reduce: Decimal.new(0) do
+      total -> Decimal.add(total, convert.(entry))
+    end
+  end
+
+  # One `unit_id` of a conversion equals `factor` native units, so a native
+  # quantity divides by the factor. Only the current version of an item's
+  # conversion is used, and it is named in the result.
+  defp cross_unit(company_id, sided, units) do
+    natives =
+      Map.new(sided, fn {_side, entry} -> {entry.item_id, entry.native_unit.id} end)
+
+    item_ids = Map.keys(natives)
+    unit_ids = Enum.map(units, & &1.id)
+
+    conversions =
+      from(conversion in Schemas.Conversion,
+        join: material in Schemas.Material,
+        on: material.id == conversion.material_id,
+        where:
+          conversion.company_id == ^company_id and material.item_id in ^item_ids and
+            conversion.unit_id in ^unit_ids,
+        order_by: [asc: conversion.version],
+        select: {material.item_id, conversion}
+      )
+      |> Repo.all()
+      |> Map.new(fn {item_id, conversion} -> {{item_id, conversion.unit_id}, conversion} end)
+
+    Enum.flat_map(units, fn unit ->
+      bases =
+        Map.new(item_ids, fn item_id ->
+          if natives[item_id] == unit.id,
+            do: {item_id, :native},
+            else: {item_id, conversions[{item_id, unit.id}]}
+        end)
+
+      if Enum.any?(bases, fn {_item_id, basis} -> is_nil(basis) end),
+        do: [],
+        else: [converted(unit, sided, bases)]
+    end)
+  end
+
+  defp converted(unit, sided, bases) do
+    convert = fn entry ->
+      case bases[entry.item_id] do
+        :native -> entry.native_quantity
+        conversion -> entry.native_quantity |> Decimal.div(conversion.factor) |> Decimal.round(12)
+      end
+    end
+
+    input = Decimal.negate(sum(sided, :input, convert))
+    output = sum(sided, :output, convert)
+
+    %{
+      unit: unit,
+      input: input,
+      output: output,
+      difference: Decimal.sub(input, output),
+      conversions:
+        for {item_id, %Schemas.Conversion{} = conversion} <- Enum.sort(bases) do
+          %{
+            item_id: item_id,
+            conversion_id: conversion.id,
+            version: conversion.version,
+            factor: conversion.factor
+          }
+        end
+    }
   end
 
   # ============================================================================
@@ -359,8 +486,7 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
   defp plan(company_id, :transform, request, materials, _locations) do
     with {:ok, inputs} <- map_ok(request.inputs, &stock(company_id, &1, materials)),
          {:ok, outputs} <- map_ok(request.outputs, &stock(company_id, &1, materials)),
-         {:ok, unit_id} <- one_native_unit(inputs ++ outputs),
-         {:ok, variance} <- variance(inputs, outputs, unit_id, Request.variance(request)) do
+         {:ok, variance} <- variance(inputs, outputs, Request.variance(request)) do
       inputs = Enum.map(inputs, &signed(&1, -1))
       entries = inputs ++ outputs ++ variance
       input_positions = Enum.to_list(0..(length(inputs) - 1)//1)
@@ -473,31 +599,38 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
     }
   end
 
-  # A transform balances in one unit; its observations are compared, never
-  # adjusted.
-  defp one_native_unit(entries) do
-    case entries |> Enum.map(& &1.native_unit_id) |> Enum.uniq() do
-      [unit_id] -> {:ok, unit_id}
-      _units -> {:error, :mixed_native_units}
-    end
-  end
+  # A transform balances per native unit; its observations are compared,
+  # never adjusted, and nothing is converted between units. Each unit whose
+  # inputs and outputs differ records the difference as a variance entry in
+  # that unit, carrying the evidence named for the unit or else the shared
+  # evidence. Evidence that no difference uses is refused.
+  defp variance(inputs, outputs, evidence) do
+    differences =
+      for unit_id <- (inputs ++ outputs) |> Enum.map(& &1.native_unit_id) |> Enum.uniq(),
+          difference = Decimal.sub(total(inputs, unit_id), total(outputs, unit_id)),
+          not Decimal.eq?(difference, 0),
+          do: {unit_id, difference}
 
-  defp variance(inputs, outputs, unit_id, evidence) do
-    difference = Decimal.sub(total(inputs), total(outputs))
+    shared = evidence && evidence.shared
+    named = (evidence && evidence.units) || %{}
+    differing = Enum.map(differences, &elem(&1, 0))
+    unnamed = Enum.reject(differing, &Map.has_key?(named, &1))
 
     cond do
-      Decimal.eq?(difference, 0) and evidence == nil ->
-        {:ok, []}
+      unnamed != [] and shared == nil ->
+        {:error, :variance_required}
 
-      Decimal.eq?(difference, 0) ->
+      Enum.any?(Map.keys(named), &(&1 not in differing)) ->
         {:error, :no_variance}
 
-      evidence == nil ->
-        {:error, :variance_required}
+      shared != nil and unnamed == [] ->
+        {:error, :no_variance}
 
       true ->
         {:ok,
-         [
+         for {unit_id, difference} <- differences do
+           %{evidence: evidence, reconciliation_basis: basis} = Map.get(named, unit_id, shared)
+
            %{
              role: "variance",
              material_id: nil,
@@ -511,15 +644,18 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
              identity_id: nil,
              new_identity: nil,
              output_role: nil,
-             evidence: evidence.evidence,
-             reconciliation_basis: evidence.reconciliation_basis
+             evidence: evidence,
+             reconciliation_basis: basis
            }
-         ]}
+         end}
     end
   end
 
-  defp total(entries),
-    do: Enum.reduce(entries, Decimal.new(0), &Decimal.add(&1.native_quantity, &2))
+  defp total(entries, unit_id) do
+    for entry <- entries, entry.native_unit_id == unit_id, reduce: Decimal.new(0) do
+      sum -> Decimal.add(sum, entry.native_quantity)
+    end
+  end
 
   defp map_ok(list, fun) do
     Enum.reduce_while(list, {:ok, []}, fn item, {:ok, acc} ->
