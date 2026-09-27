@@ -169,7 +169,9 @@ defmodule Bilimbi.Factory.ProductDefinition.Web.ResourcesLive do
         Map.merge(
           %{"code" => "", "name" => "", "resource_type_id" => "", "properties" => "{}"},
           params
-        ), as: :resource)
+        ),
+        as: :resource
+      )
 
   defp decode_properties(json) when is_binary(json) do
     case Jason.decode(json) do
