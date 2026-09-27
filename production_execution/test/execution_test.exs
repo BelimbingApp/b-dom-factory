@@ -2,8 +2,6 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
   use Bilimbi.Base.Database.DataCase, async: false
   alias Bilimbi.Base.Repo
   alias Bilimbi.Base.Authz
-  alias Bilimbi.Base.Authz.ContributionValidator
-  alias Bilimbi.Base.ModuleRegistry.ContributionRegistry
   alias Bilimbi.Base.Tenancy.Authentication
   alias Bilimbi.Factory.{Inventory, ProductDefinition, ProductionExecution}
   alias Ecto.Adapters.SQL
@@ -114,36 +112,6 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
     {order, attrs}
   end
 
-  defp authz_tables! do
-    for sql <- [
-          "CREATE TEMPORARY TABLE base_authz_roles (id bigserial PRIMARY KEY, company_id bigint, name text NOT NULL, code text NOT NULL, description text, is_system boolean NOT NULL DEFAULT false, grant_all boolean NOT NULL DEFAULT false, created_at timestamp(0), updated_at timestamp(0)) ON COMMIT PRESERVE ROWS",
-          "CREATE TEMPORARY TABLE base_authz_role_capabilities (id bigserial PRIMARY KEY, role_id bigint NOT NULL REFERENCES base_authz_roles(id), capability_key text NOT NULL, created_at timestamp(0), updated_at timestamp(0)) ON COMMIT PRESERVE ROWS",
-          "CREATE TEMPORARY TABLE base_authz_principal_roles (id bigserial PRIMARY KEY, company_id bigint, principal_type text NOT NULL, principal_id bigint NOT NULL, role_id bigint NOT NULL REFERENCES base_authz_roles(id), created_at timestamp(0), updated_at timestamp(0)) ON COMMIT PRESERVE ROWS",
-          "CREATE TEMPORARY TABLE base_authz_principal_capabilities (id bigserial PRIMARY KEY, company_id bigint, principal_type text NOT NULL, principal_id bigint NOT NULL, capability_key text NOT NULL, is_allowed boolean NOT NULL, created_at timestamp(0), updated_at timestamp(0), UNIQUE(company_id, principal_type, principal_id, capability_key)) ON COMMIT PRESERVE ROWS",
-          "CREATE TEMPORARY TABLE base_authz_decision_logs (id bigserial PRIMARY KEY, company_id bigint, actor_type text NOT NULL, actor_id bigint NOT NULL, acting_for_user_id bigint, capability text NOT NULL, resource_type text, resource_id text, allowed boolean NOT NULL, reason_code text NOT NULL, applied_policies json, context json, trace_id text, occurred_at timestamp(0) NOT NULL, created_at timestamp(0), updated_at timestamp(0)) ON COMMIT PRESERVE ROWS"
-        ],
-        do: SQL.query!(Repo, sql, [])
-
-    entries =
-      for {id, app, provider} <- [
-            {"base/authz", :bilimbi_base_authz, Bilimbi.Base.Authz.Contributions},
-            {"core/company", :bilimbi_core_company, Bilimbi.Core.Company.Contributions},
-            {"factory/production_execution", :bilimbi_factory_production_execution,
-             Bilimbi.Factory.ProductionExecution.Contributions}
-          ],
-          do: %{descriptor: %{id: id, otp_app: app}, payload: provider.contributions().authz}
-
-    authz = ContributionValidator.validate_contributions!(entries)
-    snapshot = ContributionRegistry.build!([])
-
-    ContributionRegistry.put_snapshot_for_test!(%{
-      snapshot
-      | consumers: Map.put(snapshot.consumers, :authz, authz)
-    })
-
-    on_exit(&ContributionRegistry.clear_for_test!/0)
-  end
-
   test "a held material unit is refused without an override", context do
     {order, attrs} = held_order(context)
 
@@ -240,6 +208,18 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
              )
   end
 
+  defp grant_import!(context, principal_type, principal_id) do
+    assert {:ok, :stored} =
+             Authz.put_principal_capability(
+               context.scope,
+               73,
+               principal_type,
+               principal_id,
+               "factory.production-execution.import",
+               true
+             )
+  end
+
   defp complete(context, order, attrs, source \\ :live),
     do: ProductionExecution.complete_operation(context.scope, 73, order.id, source, attrs)
 
@@ -258,7 +238,7 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
   end
 
   test "hold override requires a reason and the declared capability", context do
-    authz_tables!()
+    install_authz!()
     {order, attrs} = held_order(context)
     context = signed_in(context, 10)
 
@@ -284,7 +264,7 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
 
   test "a live override refuses system scopes, foreign company users, and asserted approvers",
        context do
-    authz_tables!()
+    install_authz!()
     grant_override!(context, 9)
     {order, attrs} = held_order(context)
 
@@ -330,7 +310,7 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
   end
 
   test "authorized override records the affected source atomically with consumption", context do
-    authz_tables!()
+    install_authz!()
     grant_override!(context, 9)
     context = signed_in(context, 9)
     {order, attrs} = held_order(context)
@@ -377,8 +357,9 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
 
   test "an imported override records its historical approver and time, not the importer",
        context do
-    authz_tables!()
+    install_authz!()
     grant_override!(context, 9)
+    grant_import!(context, :user, 9)
     context = signed_in(context, 9)
     {order, attrs} = held_order(context)
     historical_at = DateTime.add(attrs.completed_at, -60)
@@ -416,8 +397,9 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
   end
 
   test "an imported override without a named approver records none", context do
-    authz_tables!()
+    install_authz!()
     grant_override!(context, 9)
+    grant_import!(context, :user, 9)
     context = signed_in(context, 9)
     {order, attrs} = held_order(context)
 
@@ -438,8 +420,10 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
   end
 
   test "an imported override is recorded by the Scope's user, never a named actor", context do
-    authz_tables!()
+    install_authz!()
     grant_override!(context, 9)
+    grant_import!(context, :user, 9)
+    grant_import!(context, :user, 10)
     {order, attrs} = held_order(context)
 
     override = %{
@@ -461,8 +445,10 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
     assert {:error, :invalid_hold_override} =
              complete(signed_in(context, 10), order, named, :import)
 
-    assert {:error, :invalid_hold_override} = complete(context, order, named, :import)
-    assert {:error, :hold_override_denied} = complete(context, order, attrs, :import)
+    assert {:error, :invalid_hold_override} =
+             complete(signed_in(context, 9), order, named, :import)
+
+    assert {:error, :import_not_authorized} = complete(context, order, attrs, :import)
 
     assert {:error, :hold_override_denied} =
              complete(signed_in(context, 10), order, attrs, :import)
@@ -473,8 +459,9 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
   end
 
   test "an impersonated session cannot override a material hold", context do
-    authz_tables!()
+    install_authz!()
     grant_override!(context, 9)
+    grant_import!(context, :user, 9)
     {order, attrs} = held_order(context)
     context = signed_in(context, 9, 73, impersonator_id: 2, impersonation_session_id: "support")
     live = Map.put(attrs, :hold_override, %{reason: "urgent"})
@@ -497,7 +484,7 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
   end
 
   test "one override decision is logged per affected unit", context do
-    authz_tables!()
+    install_authz!()
     grant_override!(context, 9)
     context = signed_in(context, 9)
     {order, attrs} = held_order(context)
@@ -520,7 +507,7 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
   end
 
   test "failed posting leaves neither override nor consumption", context do
-    authz_tables!()
+    install_authz!()
     {order, attrs} = held_order(context)
 
     grant_override!(context, 9)
@@ -546,7 +533,7 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
   end
 
   test "override evidence failure rolls back the Inventory effect", context do
-    authz_tables!()
+    install_authz!()
     {order, attrs} = held_order(context)
 
     grant_override!(context, 9)
@@ -658,8 +645,19 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
     %{scope: scope, order: order} = context
     attrs = execution(context, "EX-HIST")
 
-    assert {:ok, completed} =
+    install_authz!()
+    user_scope = Authentication.sign_in(scope, 9, 73)
+
+    assert {:error, :import_not_authorized} =
+             ProductionExecution.complete_operation(user_scope, 73, order.id, :import, attrs)
+
+    assert {:error, :import_not_authorized} =
              ProductionExecution.complete_operation(scope, 73, order.id, :import, attrs)
+
+    grant_import!(context, :user, 9)
+
+    assert {:ok, completed} =
+             ProductionExecution.complete_operation(user_scope, 73, order.id, :import, attrs)
 
     assert completed.source == "import"
 
@@ -749,6 +747,8 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
 
   test "forward trace includes runs that drew a lot without an identified output", context do
     %{scope: scope, order: order, coil: coil, receiving: location} = context
+    install_authz!()
+    grant_import!(context, :user, 9)
 
     assert {:ok, receipt} =
              Inventory.record_receipt(
@@ -788,11 +788,17 @@ defmodule Bilimbi.Factory.ProductionExecution.ExecutionTest do
     consume = execution(context, "COIL-A-CONSUME", 30)
 
     assert {:ok, consumption} =
-             ProductionExecution.complete_operation(scope, 73, order.id, :import, %{
-               consume
-               | inputs: [Map.put(hd(consume.inputs), :identity_id, coil_a)],
-                 outputs: []
-             })
+             ProductionExecution.complete_operation(
+               Authentication.sign_in(scope, 9, 73),
+               73,
+               order.id,
+               :import,
+               %{
+                 consume
+                 | inputs: [Map.put(hd(consume.inputs), :identity_id, coil_a)],
+                   outputs: []
+               }
+             )
 
     assert {:ok, forward} = ProductionExecution.trace_forward(scope, 73, coil_a)
     assert forward.material.links == []

@@ -6,6 +6,8 @@ defmodule Bilimbi.Factory.ProductionExecution.TestFixtures do
   """
 
   alias Bilimbi.Base.Repo
+  alias Bilimbi.Base.Authz.ContributionValidator
+  alias Bilimbi.Base.ModuleRegistry.ContributionRegistry
   alias Ecto.Adapters.SQL
 
   def create_production_tables! do
@@ -39,5 +41,35 @@ defmodule Bilimbi.Factory.ProductionExecution.TestFixtures do
     )
 
     :ok
+  end
+
+  def install_authz! do
+    for sql <- [
+          "CREATE TEMPORARY TABLE base_authz_roles (id bigserial PRIMARY KEY, company_id bigint, name text NOT NULL, code text NOT NULL, description text, is_system boolean NOT NULL DEFAULT false, grant_all boolean NOT NULL DEFAULT false, created_at timestamp(0), updated_at timestamp(0)) ON COMMIT PRESERVE ROWS",
+          "CREATE TEMPORARY TABLE base_authz_role_capabilities (id bigserial PRIMARY KEY, role_id bigint NOT NULL REFERENCES base_authz_roles(id), capability_key text NOT NULL, created_at timestamp(0), updated_at timestamp(0)) ON COMMIT PRESERVE ROWS",
+          "CREATE TEMPORARY TABLE base_authz_principal_roles (id bigserial PRIMARY KEY, company_id bigint, principal_type text NOT NULL, principal_id bigint NOT NULL, role_id bigint NOT NULL REFERENCES base_authz_roles(id), created_at timestamp(0), updated_at timestamp(0)) ON COMMIT PRESERVE ROWS",
+          "CREATE TEMPORARY TABLE base_authz_principal_capabilities (id bigserial PRIMARY KEY, company_id bigint, principal_type text NOT NULL, principal_id bigint NOT NULL, capability_key text NOT NULL, is_allowed boolean NOT NULL, created_at timestamp(0), updated_at timestamp(0), UNIQUE(company_id, principal_type, principal_id, capability_key)) ON COMMIT PRESERVE ROWS",
+          "CREATE TEMPORARY TABLE base_authz_decision_logs (id bigserial PRIMARY KEY, company_id bigint, actor_type text NOT NULL, actor_id bigint NOT NULL, acting_for_user_id bigint, capability text NOT NULL, resource_type text, resource_id text, allowed boolean NOT NULL, reason_code text NOT NULL, applied_policies json, context json, trace_id text, occurred_at timestamp(0) NOT NULL, created_at timestamp(0), updated_at timestamp(0)) ON COMMIT PRESERVE ROWS"
+        ],
+        do: SQL.query!(Repo, sql, [])
+
+    entries =
+      for {id, app, provider} <- [
+            {"base/authz", :bilimbi_base_authz, Bilimbi.Base.Authz.Contributions},
+            {"core/company", :bilimbi_core_company, Bilimbi.Core.Company.Contributions},
+            {"factory/production_execution", :bilimbi_factory_production_execution,
+             Bilimbi.Factory.ProductionExecution.Contributions}
+          ],
+          do: %{descriptor: %{id: id, otp_app: app}, payload: provider.contributions().authz}
+
+    authz = ContributionValidator.validate_contributions!(entries)
+    snapshot = ContributionRegistry.build!([])
+
+    ContributionRegistry.put_snapshot_for_test!(%{
+      snapshot
+      | consumers: Map.put(snapshot.consumers, :authz, authz)
+    })
+
+    ExUnit.Callbacks.on_exit(&ContributionRegistry.clear_for_test!/0)
   end
 end

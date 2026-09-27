@@ -15,7 +15,16 @@ retained on the order and every execution.
 
 Use `complete_operation(scope, company_id, order_id, source, attrs)` for
 both live commands (`source: :live`) and historical imports
-(`source: :import`). Attributes are:
+(`source: :import`).
+
+An import requires the `factory.production-execution.import` capability for
+the order's company on the Scope's principal. An administrator grants it to a
+user or a named system principal for that company; without the grant,
+`complete_operation/5` returns `{:error, :import_not_authorized}` before
+posting. Live completion does not require this capability. Identical import
+retries are checked again, so revoking a grant also prevents retries.
+
+Attributes are:
 
 - `request_id`: company-unique retry key. Identical retries return the
   original execution; conflicting retries fail.
