@@ -12,7 +12,9 @@ defmodule Bilimbi.Factory.Inventory.Contributions do
     "commerce.inventory.item.list",
     "commerce.inventory.item.update",
     "commerce.inventory.item.view",
-    "commerce.inventory.manage"
+    "commerce.inventory.manage",
+    "factory.inventory.configuration.view",
+    "factory.inventory.configuration.manage"
   ]
 
   @item_statuses_key "factory.inventory.item_statuses"
@@ -29,6 +31,33 @@ defmodule Bilimbi.Factory.Inventory.Contributions do
   @impl true
   def contributions do
     %{
+      menu: [
+        %{
+          id: "admin.factory",
+          label: "Factory",
+          icon: "building-office-2",
+          parent: "admin",
+          route: nil,
+          capability: nil,
+          order: 80
+        },
+        %{
+          id: "admin.factory.units",
+          label: "Units",
+          parent: "admin.factory",
+          route: "/factory/units",
+          capability: "factory.inventory.configuration.view",
+          order: 20
+        },
+        %{
+          id: "admin.factory.materials",
+          label: "Materials",
+          parent: "admin.factory",
+          route: "/factory/materials",
+          capability: "factory.inventory.configuration.view",
+          order: 5
+        }
+      ],
       settings: %{
         # Both default to nil on purpose: the vocabulary and the currency are
         # a company's configuration, never Inventory's. Unconfigured, any
@@ -57,7 +86,8 @@ defmodule Bilimbi.Factory.Inventory.Contributions do
       },
       authz: %{
         domains: %{
-          "commerce" => "Commerce, catalog, inventory, marketplace, and sales operations"
+          "commerce" => "Commerce, catalog, inventory, marketplace, and sales operations",
+          "factory" => "Factory operations"
         },
         capabilities: @capabilities,
         roles: %{"tenant_owner" => %{capabilities: @capabilities}}

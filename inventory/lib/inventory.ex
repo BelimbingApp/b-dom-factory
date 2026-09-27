@@ -82,6 +82,56 @@ defmodule Bilimbi.Factory.Inventory do
     end
   end
 
+  @doc "Configures the company's item statuses and default currency as one write. Nil removes an override."
+  def configure_item_settings(%Scope{} = scope, company_id, %{
+        statuses: statuses,
+        default_currency_code: currency
+      }) do
+    with {:ok, company} <- live_company_summary(scope, company_id),
+         :ok <- validate_item_settings(statuses, currency) do
+      setting_scope = Settings.Scope.company(company.id, company.tenant_id)
+
+      Repo.transaction(fn ->
+        with {:ok, _} <-
+               put_item_setting(Contributions.item_statuses_key(), statuses, setting_scope),
+             {:ok, _} <-
+               put_item_setting(Contributions.default_currency_key(), currency, setting_scope) do
+          item_settings_of(company)
+        else
+          {:error, reason} -> Repo.rollback(reason)
+        end
+      end)
+    end
+  end
+
+  defp validate_item_settings(statuses, currency) do
+    cond do
+      not (is_nil(statuses) or
+               (is_list(statuses) and statuses != [] and
+                  Enum.all?(
+                    statuses,
+                    &(is_binary(&1) and &1 != "" and &1 == String.trim(&1) and
+                          String.length(&1) <= 255)
+                  ) and
+                  statuses == Enum.uniq(statuses))) ->
+        {:error, :invalid_item_statuses}
+
+      not (is_nil(currency) or
+               (is_binary(currency) and Regex.match?(~r/^[A-Z]{3}$/, currency))) ->
+        {:error, :invalid_default_currency}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp put_item_setting(key, nil, setting_scope) do
+    :ok = Settings.delete(key, setting_scope)
+    {:ok, nil}
+  end
+
+  defp put_item_setting(key, value, setting_scope), do: Settings.put(key, value, setting_scope)
+
   @doc """
   Lists a company's items ordered by SKU.
 
@@ -197,6 +247,34 @@ defmodule Bilimbi.Factory.Inventory do
     end
   end
 
+  @doc "Renames a company's unit. Its code remains stable in conversion and posting history."
+  def rename_unit(%Scope{} = scope, company_id, unit_id, attributes) when is_map(attributes) do
+    with :ok <- live_company(scope, company_id),
+         {:ok, unit} <- fetch(Schemas.Unit, company_id, unit_id, :unit_not_found),
+         :ok <- active_unit(unit),
+         {:ok, updated} <- unit |> Schemas.Unit.rename_changeset(attributes) |> Repo.update() do
+      {:ok, Unit.from_schema(updated)}
+    end
+  end
+
+  @doc "Retires a unit while preserving the IDs in existing conversions and postings."
+  def retire_unit(%Scope{} = scope, company_id, unit_id) do
+    with :ok <- live_company(scope, company_id),
+         {:ok, unit} <- fetch(Schemas.Unit, company_id, unit_id, :unit_not_found),
+         :ok <- active_unit(unit),
+         {:ok, retired} <-
+           unit
+           |> Ecto.Changeset.change(
+             retired_at: NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+           )
+           |> Repo.update() do
+      {:ok, Unit.from_schema(retired)}
+    end
+  end
+
+  defp active_unit(%{retired_at: nil}), do: :ok
+  defp active_unit(_), do: {:error, :unit_retired}
+
   # ============================================================================
   # Stock locations
   # ============================================================================
@@ -249,8 +327,8 @@ defmodule Bilimbi.Factory.Inventory do
   Defines a company material type from `code` (upper-cased, unique in the
   company), `name`, and `property_definitions`, a list validated by
   `Bilimbi.Factory.Inventory.PropertyDefinition.normalize_definitions/1`
-  (empty for a type with no properties). A type is immutable: the materials
-  registered under it hold values against exactly these definitions.
+  (empty for a type with no properties). Definitions stop changing once a
+  material uses the type, so recorded values retain their meaning.
   """
   @spec create_material_type(Scope.t(), pos_integer(), map()) ::
           {:ok, MaterialType.t()}
@@ -276,6 +354,56 @@ defmodule Bilimbi.Factory.Inventory do
          {:ok, type} <-
            fetch(Schemas.MaterialType, company_id, material_type_id, :material_type_not_found) do
       {:ok, MaterialType.from_schema(type)}
+    end
+  end
+
+  @doc "Updates a company's material type. Property definitions cannot change after a material uses the type."
+  def update_material_type(%Scope{} = scope, company_id, material_type_id, attributes)
+      when is_map(attributes) do
+    with :ok <- live_company(scope, company_id),
+         {:ok, type} <-
+           fetch(Schemas.MaterialType, company_id, material_type_id, :material_type_not_found),
+         :ok <- editable_type(type),
+         {:ok, definitions} <-
+           PropertyDefinition.normalize_definitions(
+             attribute(attributes, :property_definitions, type.property_definitions)
+           ),
+         :ok <- definitions_editable(type, definitions),
+         {:ok, updated} <-
+           type |> Schemas.MaterialType.update_changeset(attributes, definitions) |> Repo.update() do
+      {:ok, MaterialType.from_schema(updated)}
+    end
+  end
+
+  @doc "Retires a material type without removing historical references."
+  def retire_material_type(%Scope{} = scope, company_id, material_type_id) do
+    with :ok <- live_company(scope, company_id),
+         {:ok, type} <-
+           fetch(Schemas.MaterialType, company_id, material_type_id, :material_type_not_found),
+         :ok <- editable_type(type),
+         {:ok, retired} <-
+           type
+           |> Ecto.Changeset.change(
+             retired_at: NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+           )
+           |> Repo.update() do
+      {:ok, MaterialType.from_schema(retired)}
+    end
+  end
+
+  defp editable_type(%{retired_at: nil}), do: :ok
+  defp editable_type(_type), do: {:error, :material_type_retired}
+
+  defp definitions_editable(type, definitions) do
+    if definitions == type.property_definitions or
+         not Repo.exists?(
+           from(m in Schemas.Material,
+             where: m.company_id == ^type.company_id and m.material_type_id == ^type.id
+           )
+         ) do
+      :ok
+    else
+      {:error, :material_type_in_use}
     end
   end
 
@@ -332,6 +460,7 @@ defmodule Bilimbi.Factory.Inventory do
     with :ok <- live_company(scope, company_id),
          {:ok, item} <- fetch(Schemas.Item, company_id, item_id, :item_not_found),
          {:ok, unit} <- fetch(Schemas.Unit, company_id, native_unit_id, :unit_not_found),
+         :ok <- active_unit(unit),
          {:ok, type_id, properties} <-
            typed_properties(company_id, opts[:material_type_id], opts[:properties]),
          {:ok, material} <-
@@ -342,6 +471,19 @@ defmodule Bilimbi.Factory.Inventory do
     end
   end
 
+  @doc "Creates an item and registers it as a material atomically."
+  def create_material(%Scope{} = scope, company_id, item_attributes, native_unit_id, opts \\ [])
+      when is_map(item_attributes) do
+    Repo.transaction(fn ->
+      with {:ok, item} <- create_item(scope, company_id, item_attributes),
+           {:ok, material} <- register_material(scope, company_id, item.id, native_unit_id, opts) do
+        material
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+  end
+
   @spec get_material(Scope.t(), pos_integer(), pos_integer()) ::
           {:ok, Material.t()}
           | {:error, :company_not_found | :item_not_found | :material_not_found}
@@ -349,6 +491,106 @@ defmodule Bilimbi.Factory.Inventory do
     with :ok <- live_company(scope, company_id),
          {:ok, item, material, unit} <- fetch_material(company_id, item_id) do
       {:ok, material(company_id, item, material, unit)}
+    end
+  end
+
+  @doc "Updates an item's editable details and the material's typed values, preserving its native unit and type."
+  def update_material(%Scope{} = scope, company_id, item_id, item_attributes, properties)
+      when is_map(item_attributes) do
+    with {:ok, company} <- live_company_summary(scope, company_id),
+         {:ok, item, material_row, native_unit} <- fetch_material(company_id, item_id),
+         :ok <- active_material(material_row),
+         {:ok, normalized} <-
+           existing_typed_properties(company_id, material_row.material_type_id, properties) do
+      Repo.transaction(fn ->
+        with {:ok, updated_item} <-
+               item
+               |> Schemas.Item.update_changeset(item_attributes, item_settings_of(company))
+               |> Repo.update(),
+             {:ok, updated_material} <-
+               material_row |> Ecto.Changeset.change(properties: normalized) |> Repo.update() do
+          material(company_id, updated_item, updated_material, native_unit)
+        else
+          {:error, reason} -> Repo.rollback(reason)
+        end
+      end)
+    end
+  end
+
+  @doc "Retires a material with no stock balance, preserving its posting history."
+  def retire_material(%Scope{} = scope, company_id, item_id) do
+    with :ok <- live_company(scope, company_id),
+         {:ok, item, material_row, native_unit} <- fetch_material(company_id, item_id) do
+      Repo.transaction(fn ->
+        locked =
+          Repo.one!(
+            from(m in Schemas.Material, where: m.id == ^material_row.id, lock: "FOR UPDATE")
+          )
+
+        with :ok <- active_material(locked),
+             :ok <- no_material_stock(locked),
+             {:ok, retired} <-
+               locked
+               |> Ecto.Changeset.change(
+                 retired_at: NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+               )
+               |> Repo.update() do
+          material(company_id, item, retired, native_unit)
+        else
+          {:error, reason} -> Repo.rollback(reason)
+        end
+      end)
+    end
+  end
+
+  defp active_material(%{retired_at: nil}), do: :ok
+  defp active_material(_), do: {:error, :material_retired}
+
+  defp no_material_stock(material_row) do
+    balance =
+      Repo.one(
+        from(e in Schemas.Entry,
+          where: e.material_id == ^material_row.id,
+          select: sum(e.native_quantity)
+        )
+      )
+
+    if is_nil(balance) or Decimal.equal?(balance, Decimal.new(0)),
+      do: :ok,
+      else: {:error, :material_has_stock}
+  end
+
+  defp existing_typed_properties(_company_id, nil, properties),
+    do: PropertyDefinition.validate_values([], properties)
+
+  defp existing_typed_properties(company_id, type_id, properties) do
+    with {:ok, type} <- fetch(Schemas.MaterialType, company_id, type_id, :material_type_not_found) do
+      PropertyDefinition.validate_values(type.property_definitions, properties)
+    end
+  end
+
+  @doc "Lists a company's registered materials by item SKU, capped by `:limit`."
+  def list_materials(%Scope{} = scope, company_id, opts \\ []) do
+    opts = Keyword.validate!(opts, limit: @default_limit)
+
+    with :ok <- live_company(scope, company_id) do
+      materials =
+        from(m in Schemas.Material,
+          join: item in Schemas.Item,
+          on: item.id == m.item_id and item.company_id == ^company_id,
+          join: unit in Schemas.Unit,
+          on: unit.id == m.native_unit_id and unit.company_id == ^company_id,
+          where: m.company_id == ^company_id,
+          order_by: [asc: item.sku],
+          limit: ^limit!(opts[:limit]),
+          select: {item, m, unit}
+        )
+        |> Repo.all()
+        |> Enum.map(fn {item, material_row, unit} ->
+          material(company_id, item, material_row, unit)
+        end)
+
+      {:ok, materials}
     end
   end
 
@@ -741,6 +983,7 @@ defmodule Bilimbi.Factory.Inventory do
   defp typed_properties(company_id, material_type_id, properties) do
     with {:ok, type} <-
            fetch(Schemas.MaterialType, company_id, material_type_id, :material_type_not_found),
+         :ok <- editable_type(type),
          {:ok, values} <-
            PropertyDefinition.validate_values(type.property_definitions, properties) do
       {:ok, type.id, values}
@@ -780,6 +1023,7 @@ defmodule Bilimbi.Factory.Inventory do
   defp insert_conversion(company_id, item_id, unit_id, factor) do
     with {:ok, item, material, native_unit} <- fetch_material(company_id, item_id),
          {:ok, unit} <- fetch(Schemas.Unit, company_id, unit_id, :unit_not_found),
+         :ok <- active_unit(unit),
          :ok <- not_native(unit, native_unit) do
       Repo.one!(
         from(material in Schemas.Material,
@@ -864,7 +1108,8 @@ defmodule Bilimbi.Factory.Inventory do
       sku: item.sku,
       native_unit: Unit.from_schema(native_unit),
       material_type_id: material.material_type_id,
-      properties: material.properties
+      properties: material.properties,
+      retired_at: material.retired_at
     }
   end
 

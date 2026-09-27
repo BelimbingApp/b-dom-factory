@@ -33,6 +33,7 @@ defmodule Bilimbi.Factory.ProductDefinition.Schemas.ResourceType do
     field(:code, :string)
     field(:name, :string)
     field(:property_definitions, {:array, :map}, default: [])
+    field(:retired_at, :naive_datetime)
     timestamps(type: :naive_datetime)
   end
 
@@ -42,6 +43,16 @@ defmodule Bilimbi.Factory.ProductDefinition.Schemas.ResourceType do
     |> cast(attrs, [:company_id, :code, :name, :property_definitions])
     |> update_change(:code, &(&1 |> String.trim() |> String.upcase()))
     |> validate_required([:company_id, :code, :name, :property_definitions])
+    |> validate_length(:code, max: 64)
+    |> validate_length(:name, max: 255)
+    |> unique_constraint([:company_id, :code], name: :factory_resource_types_company_code_unique)
+  end
+
+  def update_changeset(type, attrs) do
+    type
+    |> cast(attrs, [:code, :name, :property_definitions])
+    |> update_change(:code, &(&1 |> String.trim() |> String.upcase()))
+    |> validate_required([:code, :name, :property_definitions])
     |> validate_length(:code, max: 64)
     |> validate_length(:name, max: 255)
     |> unique_constraint([:company_id, :code], name: :factory_resource_types_company_code_unique)
@@ -58,6 +69,7 @@ defmodule Bilimbi.Factory.ProductDefinition.Schemas.Resource do
     field(:name, :string)
     field(:resource_type_id, :integer)
     field(:properties, :map, default: %{})
+    field(:retired_at, :naive_datetime)
     timestamps(type: :naive_datetime)
   end
 
@@ -68,6 +80,13 @@ defmodule Bilimbi.Factory.ProductDefinition.Schemas.Resource do
     |> validate_required([:company_id, :code, :name, :resource_type_id, :properties])
     |> unique_constraint([:company_id, :code], name: :factory_resources_company_code_unique)
     |> foreign_key_constraint(:resource_type_id, name: :factory_resources_resource_type_id_fkey)
+  end
+
+  def update_changeset(resource, attrs) do
+    resource
+    |> cast(attrs, [:code, :name, :properties])
+    |> validate_required([:code, :name, :properties])
+    |> unique_constraint([:company_id, :code], name: :factory_resources_company_code_unique)
   end
 end
 

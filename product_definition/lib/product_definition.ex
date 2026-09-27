@@ -26,8 +26,8 @@ defmodule Bilimbi.Factory.ProductDefinition do
   }
 
   @product_fields [:id, :company_id, :item_id, :code, :name]
-  @resource_type_fields [:id, :company_id, :code, :name, :property_definitions]
-  @resource_fields [:id, :company_id, :code, :name, :resource_type_id, :properties]
+  @resource_type_fields [:id, :company_id, :code, :name, :property_definitions, :retired_at]
+  @resource_fields [:id, :company_id, :code, :name, :resource_type_id, :properties, :retired_at]
   @formula_fields [:id, :company_id, :product_id, :version, :lines, :process_config]
   @routing_fields [:id, :company_id, :product_id, :version, :operations, :process_config]
 
@@ -49,12 +49,24 @@ defmodule Bilimbi.Factory.ProductDefinition do
     fetch(scope, company_id, Product, product_id, :product_not_found, @product_fields)
   end
 
+  @doc "Lists a company's product definitions ordered by code."
+  def list_products(%Scope{} = scope, company_id) do
+    with :ok <- live_company(scope, company_id) do
+      {:ok,
+       Product
+       |> where([p], p.company_id == ^company_id)
+       |> order_by([p], asc: p.code)
+       |> Repo.all()
+       |> Enum.map(&Map.take(&1, @product_fields))}
+    end
+  end
+
   @doc """
   Defines a company resource type from `code` (upper-cased, unique in the
   company), `name`, and `property_definitions`, validated by
   `Bilimbi.Factory.Inventory.PropertyDefinition.normalize_definitions/1`
-  (empty for a type with no properties). A type is immutable: its resources
-  hold values against exactly these definitions.
+  (empty for a type with no properties). Definitions stop changing once a
+  resource uses the type, so recorded values retain their meaning.
   """
   def create_resource_type(%Scope{} = scope, company_id, attrs) when is_map(attrs) do
     with :ok <- live_company(scope, company_id),
@@ -69,6 +81,78 @@ defmodule Bilimbi.Factory.ProductDefinition do
 
       insert(ResourceType.changeset(attrs), @resource_type_fields)
     end
+  end
+
+  @doc "Updates a resource type; property definitions are fixed once resources use it."
+  def update_resource_type(%Scope{} = scope, company_id, type_id, attrs) when is_map(attrs) do
+    with :ok <- live_company(scope, company_id),
+         {:ok, type} <- resource_type_row(company_id, type_id),
+         :ok <- active_type(type),
+         {:ok, definitions} <-
+           PropertyDefinition.normalize_definitions(
+             value(attrs, :property_definitions, type.property_definitions)
+           ),
+         :ok <- editable_definitions(type, definitions),
+         {:ok, updated} <-
+           type
+           |> ResourceType.update_changeset(
+             attrs
+             |> string_keys()
+             |> Map.put("property_definitions", definitions)
+           )
+           |> Repo.update() do
+      {:ok, Map.take(updated, @resource_type_fields)}
+    end
+  end
+
+  @doc "Retires a resource type after all its resources are retired."
+  def retire_resource_type(%Scope{} = scope, company_id, type_id) do
+    with :ok <- live_company(scope, company_id),
+         {:ok, type} <- resource_type_row(company_id, type_id),
+         :ok <- active_type(type),
+         :ok <- no_active_resources(type),
+         {:ok, retired} <-
+           type
+           |> Ecto.Changeset.change(
+             retired_at: NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+           )
+           |> Repo.update() do
+      {:ok, Map.take(retired, @resource_type_fields)}
+    end
+  end
+
+  defp resource_type_row(company_id, id) when is_integer(id) and id > 0 do
+    case Repo.get_by(ResourceType, id: id, company_id: company_id) do
+      nil -> {:error, :resource_type_not_found}
+      type -> {:ok, type}
+    end
+  end
+
+  defp resource_type_row(_, _), do: {:error, :resource_type_not_found}
+  defp active_type(%{retired_at: nil}), do: :ok
+  defp active_type(_), do: {:error, :resource_type_retired}
+
+  defp editable_definitions(type, definitions) do
+    if definitions == type.property_definitions or
+         not Repo.exists?(
+           from(r in Resource,
+             where: r.company_id == ^type.company_id and r.resource_type_id == ^type.id
+           )
+         ),
+       do: :ok,
+       else: {:error, :resource_type_in_use}
+  end
+
+  defp no_active_resources(type) do
+    if Repo.exists?(
+         from(r in Resource,
+           where:
+             r.company_id == ^type.company_id and r.resource_type_id == ^type.id and
+               is_nil(r.retired_at)
+         )
+       ),
+       do: {:error, :resource_type_in_use},
+       else: :ok
   end
 
   def get_resource_type(%Scope{} = scope, company_id, resource_type_id) do
@@ -105,6 +189,7 @@ defmodule Bilimbi.Factory.ProductDefinition do
   """
   def create_resource(%Scope{} = scope, company_id, attrs) when is_map(attrs) do
     with {:ok, type} <- get_resource_type(scope, company_id, value(attrs, :resource_type_id)),
+         :ok <- active_type(type),
          {:ok, properties} <-
            PropertyDefinition.validate_values(
              type.property_definitions,
@@ -121,6 +206,67 @@ defmodule Bilimbi.Factory.ProductDefinition do
       insert(Resource.changeset(attrs), @resource_fields)
     end
   end
+
+  @doc "Lists a company's resources ordered by code."
+  def list_resources(%Scope{} = scope, company_id) do
+    with :ok <- live_company(scope, company_id) do
+      {:ok,
+       Resource
+       |> where([r], r.company_id == ^company_id)
+       |> order_by([r], asc: r.code)
+       |> Repo.all()
+       |> Enum.map(&Map.take(&1, @resource_fields))}
+    end
+  end
+
+  @doc "Updates a resource's code, name and typed values without changing its type."
+  def update_resource(%Scope{} = scope, company_id, resource_id, attrs) when is_map(attrs) do
+    with :ok <- live_company(scope, company_id),
+         {:ok, resource} <- resource_row(company_id, resource_id),
+         :ok <- active_resource(resource),
+         {:ok, type} <- get_resource_type(scope, company_id, resource.resource_type_id),
+         {:ok, properties} <-
+           PropertyDefinition.validate_values(
+             type.property_definitions,
+             value(attrs, :properties, resource.properties)
+           ),
+         {:ok, updated} <-
+           resource
+           |> Resource.update_changeset(
+             attrs
+             |> string_keys()
+             |> Map.put("properties", properties)
+           )
+           |> Repo.update() do
+      {:ok, Map.take(updated, @resource_fields)}
+    end
+  end
+
+  @doc "Retires a resource without changing existing routing revisions."
+  def retire_resource(%Scope{} = scope, company_id, resource_id) do
+    with :ok <- live_company(scope, company_id),
+         {:ok, resource} <- resource_row(company_id, resource_id),
+         :ok <- active_resource(resource),
+         {:ok, retired} <-
+           resource
+           |> Ecto.Changeset.change(
+             retired_at: NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+           )
+           |> Repo.update() do
+      {:ok, Map.take(retired, @resource_fields)}
+    end
+  end
+
+  defp resource_row(company_id, id) when is_integer(id) and id > 0 do
+    case Repo.get_by(Resource, id: id, company_id: company_id) do
+      nil -> {:error, :resource_not_found}
+      resource -> {:ok, resource}
+    end
+  end
+
+  defp resource_row(_, _), do: {:error, :resource_not_found}
+  defp active_resource(%{retired_at: nil}), do: :ok
+  defp active_resource(_), do: {:error, :resource_retired}
 
   def get_resource(%Scope{} = scope, company_id, resource_id) do
     fetch(scope, company_id, Resource, resource_id, :resource_not_found, @resource_fields)
@@ -173,6 +319,27 @@ defmodule Bilimbi.Factory.ProductDefinition do
 
   def get_routing_revision(%Scope{} = scope, company_id, product_id, version) do
     revision(scope, company_id, Routing, product_id, version, :routing_not_found, @routing_fields)
+  end
+
+  @doc "Lists every immutable formula revision for one company product."
+  def list_formula_revisions(%Scope{} = scope, company_id, product_id) do
+    list_revisions(scope, company_id, product_id, Formula, @formula_fields)
+  end
+
+  @doc "Lists every immutable routing revision for one company product."
+  def list_routing_revisions(%Scope{} = scope, company_id, product_id) do
+    list_revisions(scope, company_id, product_id, Routing, @routing_fields)
+  end
+
+  defp list_revisions(scope, company_id, product_id, schema, fields) do
+    with {:ok, _product} <- get_product(scope, company_id, product_id) do
+      {:ok,
+       schema
+       |> where([r], r.company_id == ^company_id and r.product_id == ^product_id)
+       |> order_by([r], asc: r.version)
+       |> Repo.all()
+       |> Enum.map(&Map.take(&1, fields))}
+    end
   end
 
   @doc "Resolves the exact immutable definitions selected by a future order."
@@ -382,7 +549,8 @@ defmodule Bilimbi.Factory.ProductDefinition do
   defp each_unit(scope, company_id, ids) do
     Enum.reduce_while(Enum.uniq(ids), :ok, fn id, _ ->
       case Inventory.get_unit(scope, company_id, id) do
-        {:ok, _} -> {:cont, :ok}
+        {:ok, %{retired_at: nil}} -> {:cont, :ok}
+        {:ok, _} -> {:halt, {:error, :unit_retired}}
         error -> {:halt, error}
       end
     end)
@@ -391,7 +559,8 @@ defmodule Bilimbi.Factory.ProductDefinition do
   defp each_resource(scope, company_id, ids) do
     Enum.reduce_while(Enum.uniq(ids), :ok, fn id, _ ->
       case get_resource(scope, company_id, id) do
-        {:ok, _} -> {:cont, :ok}
+        {:ok, %{retired_at: nil}} -> {:cont, :ok}
+        {:ok, _} -> {:halt, {:error, :resource_retired}}
         error -> {:halt, error}
       end
     end)
@@ -444,4 +613,6 @@ defmodule Bilimbi.Factory.ProductDefinition do
 
   defp value(map, key, default \\ nil),
     do: Map.get(map, key, Map.get(map, Atom.to_string(key), default))
+
+  defp string_keys(map), do: Map.new(map, fn {key, value} -> {to_string(key), value} end)
 end

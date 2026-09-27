@@ -60,8 +60,12 @@ defmodule Bilimbi.Factory.Inventory.TestFixtures do
     :ok
   end
 
-  def create_inventory_tables! do
-    apply(CompanyTestFixtures, :create_company_identity_tables!, [])
+  def create_inventory_tables!(opts \\ []) do
+    opts = Keyword.validate!(opts, company_tables?: true)
+
+    if opts[:company_tables?],
+      do: apply(CompanyTestFixtures, :create_company_identity_tables!, [])
+
     apply(SettingsTestFixtures, :create_settings_table!, [])
 
     Enum.each(
@@ -93,6 +97,7 @@ defmodule Bilimbi.Factory.Inventory.TestFixtures do
           company_id bigint NOT NULL REFERENCES companies (id),
           code varchar(32) NOT NULL,
           name varchar(255) NOT NULL,
+          retired_at timestamp(0) without time zone,
           created_at timestamp(0) without time zone NOT NULL,
           updated_at timestamp(0) without time zone NOT NULL,
           CONSTRAINT factory_inventory_units_company_id_code_unique UNIQUE (company_id, code)
@@ -116,6 +121,7 @@ defmodule Bilimbi.Factory.Inventory.TestFixtures do
           code varchar(64) NOT NULL,
           name varchar(255) NOT NULL,
           property_definitions jsonb[] NOT NULL,
+          retired_at timestamp(0) without time zone,
           created_at timestamp(0) without time zone NOT NULL,
           updated_at timestamp(0) without time zone NOT NULL,
           CONSTRAINT factory_inventory_material_types_company_id_code_unique UNIQUE (company_id, code),
@@ -130,6 +136,7 @@ defmodule Bilimbi.Factory.Inventory.TestFixtures do
           native_unit_id bigint NOT NULL REFERENCES factory_inventory_units (id),
           material_type_id bigint,
           properties jsonb NOT NULL DEFAULT '{}'::jsonb,
+          retired_at timestamp(0) without time zone,
           created_at timestamp(0) without time zone NOT NULL,
           updated_at timestamp(0) without time zone NOT NULL,
           CONSTRAINT factory_inventory_materials_item_id_unique UNIQUE (item_id),

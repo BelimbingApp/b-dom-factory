@@ -18,7 +18,9 @@ optional unit, required). `create_resource/3` names the type and holds
 `properties` validated against its definitions; values the type does not
 define, a missing required value, a value of the wrong type, or another
 company's type are refused. `get_resource_type/3`, `list_resource_types/2`,
-and `get_resource/3` read them back. A type is immutable in this slice.
+`get_resource/3`, and `list_resources/2` read them back. A type's definitions
+can change until a resource uses it. Resource types can retire once their
+resources are retired; retired resources cannot enter new routing revisions.
 
 Nothing in code names a kind of resource. The migration that introduced types
 turned each `kind` a company's resources had used into one of that company's
@@ -31,6 +33,13 @@ and routing revisions a future order will retain, refusing a routing whose
 operation inputs are not Formula/BOM inputs, whose outputs are not Formula/BOM
 outputs, or that never outputs the product's item. Definitions do not create
 orders or post material movements.
+
+Company administration lives at `/factory/resource-types`,
+`/factory/resources`, and `/factory/definitions`. The definitions screen lists
+all Formula/BOM and routing versions through `list_formula_revisions/3` and
+`list_routing_revisions/3`; it publishes new immutable versions through the
+existing API. Published versions cannot be edited or retired. Editing a
+resource preserves its type and validates its properties against that type.
 
 The tables are Bilimbi-only; they have no Belimbing adoption baseline. Use
 `mix bilimbi.migrate` from the mounted Bilimbi root.

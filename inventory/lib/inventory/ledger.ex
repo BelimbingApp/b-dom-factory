@@ -32,6 +32,7 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
           | :request_id_conflict
           | :item_not_found
           | :material_not_found
+          | :material_retired
           | :location_not_found
           | :conversion_not_found
           | :transaction_not_found
@@ -336,6 +337,7 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
          :ok <- authorised(kind, request, original, authority),
          {:ok, materials} <- lock_materials(company_id, request),
          :ok <- fresh(company_id, request),
+         :ok <- active_materials(kind, materials),
          {:ok, locations} <- locations(company_id, request),
          {:ok, plan} <- plan(company_id, kind, request, materials, locations),
          :ok <- validate_identities(company_id, kind, plan.entries),
@@ -347,6 +349,14 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
       {:replay, transaction_id} -> {:ok, transaction_id}
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  defp active_materials(:correction, _materials), do: :ok
+
+  defp active_materials(_kind, materials) do
+    if Enum.any?(materials, fn {_item_id, {material, _unit}} -> material.retired_at != nil end),
+      do: {:error, :material_retired},
+      else: :ok
   end
 
   defp corrected(company_id, :correction, request) do

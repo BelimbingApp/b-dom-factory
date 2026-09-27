@@ -8,9 +8,10 @@ defmodule Bilimbi.Factory.Inventory.Schemas.Unit do
   import Ecto.Changeset
 
   schema "factory_inventory_units" do
-    field :company_id, :id
-    field :code, :string
-    field :name, :string
+    field(:company_id, :id)
+    field(:code, :string)
+    field(:name, :string)
+    field(:retired_at, :naive_datetime)
     timestamps(type: :naive_datetime, inserted_at: :created_at)
   end
 
@@ -24,5 +25,12 @@ defmodule Bilimbi.Factory.Inventory.Schemas.Unit do
     |> validate_length(:code, max: 32)
     |> validate_length(:name, max: 255)
     |> unique_constraint(:code, name: :factory_inventory_units_company_id_code_unique)
+  end
+
+  def rename_changeset(unit, attributes) do
+    unit
+    |> cast(attributes, [:name])
+    |> validate_required([:name])
+    |> validate_length(:name, max: 255)
   end
 end
