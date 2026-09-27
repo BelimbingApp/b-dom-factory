@@ -95,7 +95,9 @@ defmodule Bilimbi.Factory.ProductionExecution do
 
   @doc """
   Completes one routed operation. `source` is `:live` or `:import`; both use
-  identical validation and posting. The request contains a company-unique
+  identical validation and posting, but an import first requires the
+  `factory.production-execution.import` capability (see `docs/README.md`).
+  The request contains a company-unique
   `request_id`, operation code, resource ID, operator type and ID, start and
   completion times, evidence, actual input and output lines, and optional
   Inventory variance evidence. An identical retry returns the original result.
