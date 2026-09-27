@@ -199,7 +199,7 @@ defmodule Bilimbi.Factory.Inventory.Ledger do
   # Balance
   # ============================================================================
 
-  @doc "The transaction's balance net of its corrections: per native unit, and across units where every line converts."
+  @doc "The transaction's balance net of its corrections: per native unit, and across units in a unit every line was posted in."
   @spec balance(pos_integer(), Transaction.t()) :: Balance.t()
   def balance(company_id, %Transaction{} = transaction) do
     corrections = corrections(company_id, transaction.id)
