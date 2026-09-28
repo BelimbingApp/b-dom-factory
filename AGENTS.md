@@ -33,6 +33,13 @@ and phases are Bilimbi's `docs/plans/factory/0000-factory-domain.md` and
   carries such a name only as data. Validate a type's values with
   `inventory/lib/inventory/property_definition.ex` and read item statuses and
   the default currency with `Inventory.item_settings/2`.
+- Never hard-code what should be configurable. Values an operator could
+  reasonably set (servers and credentials, schedules, limits, scopes,
+  mappings, codes, visibility, approvers) are settings with an operator UI,
+  not code constants, config files, or environment-only values; only values
+  needed before the settings store is reachable stay in the runtime
+  environment. Secrets are stored encrypted and never displayed back or
+  logged.
 - Use `ProductDefinition.select_revisions/5` for an order's exact definition
   selection; its facade validates Inventory references through Inventory's public
   API. Do not read either module's private tables from another module.
