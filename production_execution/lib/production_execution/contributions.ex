@@ -12,7 +12,9 @@ defmodule Bilimbi.Factory.ProductionExecution.Contributions do
     "factory.production-execution.wastage.record",
     "factory.production-execution.wastage.correct",
     "factory.production-execution.labour.record",
-    "factory.production-execution.labour.manage"
+    "factory.production-execution.labour.manage",
+    "factory.production-execution.measurement.record",
+    "factory.production-execution.measurement.correct"
   ]
 
   @impl true
@@ -42,6 +44,14 @@ defmodule Bilimbi.Factory.ProductionExecution.Contributions do
           route: "/factory/labour-roles",
           capability: @view,
           order: 85
+        },
+        %{
+          id: "admin.factory.measurement-types",
+          label: "Measurement types",
+          parent: "admin.factory",
+          route: "/factory/measurement-types",
+          capability: @view,
+          order: 90
         }
       ],
       authz: %{

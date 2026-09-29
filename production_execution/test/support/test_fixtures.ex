@@ -25,6 +25,7 @@ defmodule Bilimbi.Factory.ProductionExecution.TestFixtures do
         do: SQL.query!(Repo, sql, [])
 
     create_wastage_tables!()
+    create_measurement_tables!()
 
     SQL.query!(
       Repo,
@@ -54,6 +55,17 @@ defmodule Bilimbi.Factory.ProductionExecution.TestFixtures do
           "CREATE FUNCTION pg_temp.refuse_wastage_change() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'wastage records are immutable; record a correction'; END $$",
           "CREATE TRIGGER wastage_records_append_only BEFORE UPDATE OR DELETE ON factory_wastage_records FOR EACH ROW EXECUTE FUNCTION pg_temp.refuse_wastage_change()",
           "CREATE TRIGGER wastage_records_no_truncate BEFORE TRUNCATE ON factory_wastage_records FOR EACH STATEMENT EXECUTE FUNCTION pg_temp.refuse_wastage_change()"
+        ],
+        do: SQL.query!(Repo, sql, [])
+  end
+
+  defp create_measurement_tables! do
+    for sql <- [
+          "CREATE TEMPORARY TABLE factory_measurement_types (id bigserial PRIMARY KEY, company_id bigint NOT NULL REFERENCES companies(id), code varchar(64) NOT NULL, label text NOT NULL, value_type text NOT NULL, unit varchar(32), minimum numeric(24, 12), maximum numeric(24, 12), target numeric(24, 12), active boolean NOT NULL DEFAULT true, inserted_at timestamp(0) NOT NULL, updated_at timestamp(0) NOT NULL, CONSTRAINT factory_measurement_types_company_id_code_unique UNIQUE (company_id, code), CONSTRAINT factory_measurement_types_id_company_id_unique UNIQUE (id, company_id), CONSTRAINT factory_measurement_types_limits CHECK (minimum IS NULL OR maximum IS NULL OR minimum <= maximum)) ON COMMIT PRESERVE ROWS",
+          "CREATE TEMPORARY TABLE factory_measurements (id bigserial PRIMARY KEY, company_id bigint NOT NULL REFERENCES companies(id), request_id text NOT NULL, request_fingerprint text NOT NULL, order_id bigint NOT NULL REFERENCES factory_production_orders(id), execution_id bigint NOT NULL REFERENCES factory_operation_executions(id), identity_id bigint REFERENCES factory_inventory_identities(id), measurement_type_id bigint NOT NULL, value text NOT NULL, unit varchar(32), minimum numeric(24, 12), maximum numeric(24, 12), target numeric(24, 12), out_of_range boolean, note text, measured_at timestamp(6) NOT NULL, recorded_by_type text NOT NULL, recorded_by_id bigint NOT NULL, recorded_by_acting_for_user_id bigint, corrects_id bigint UNIQUE REFERENCES factory_measurements(id), correction_reason text, inserted_at timestamp(0) NOT NULL, UNIQUE(company_id, request_id), CONSTRAINT factory_measurements_measurement_type_id_fkey FOREIGN KEY (measurement_type_id, company_id) REFERENCES factory_measurement_types (id, company_id), CONSTRAINT factory_measurements_correction CHECK ((corrects_id IS NULL AND correction_reason IS NULL) OR (corrects_id IS NOT NULL AND length(btrim(correction_reason)) > 0))) ON COMMIT PRESERVE ROWS",
+          "CREATE FUNCTION pg_temp.refuse_measurement_change() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'measurements are immutable; record a correction'; END $$",
+          "CREATE TRIGGER measurements_append_only BEFORE UPDATE OR DELETE ON factory_measurements FOR EACH ROW EXECUTE FUNCTION pg_temp.refuse_measurement_change()",
+          "CREATE TRIGGER measurements_no_truncate BEFORE TRUNCATE ON factory_measurements FOR EACH STATEMENT EXECUTE FUNCTION pg_temp.refuse_measurement_change()"
         ],
         do: SQL.query!(Repo, sql, [])
   end

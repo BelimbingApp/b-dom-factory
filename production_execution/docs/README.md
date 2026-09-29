@@ -190,13 +190,45 @@ an order's entries with each closed entry's `seconds`, and
 `labour_summary/3` totals the current ones per run and per worker, with those
 still open.
 
+### Output measurements
+
+Measurement types are the company's configuration, managed at
+`/factory/measurement-types` or through `create_measurement_type/3`,
+`update_measurement_type/4`, `get_measurement_type/3`, and
+`list_measurement_types/3`. A type is one property definition in Inventory's
+shape (`Bilimbi.Factory.Inventory.PropertyDefinition`): a `label`, a
+`value_type` (`string`, `integer`, `decimal`, or `boolean`), and a `unit`
+only for a numeric type, plus an upper-cased `code` and, for a numeric type,
+optional decimal `minimum`, `maximum`, and `target` (minimum not above
+maximum). For example, a company might define a mass-per-area measure in
+`g/m2` with a target and limits. The code, value type, and unit are fixed
+once created; the label, limits, and `active` change.
+
+`record_measurement(scope, company_id, execution_id, attrs)` needs
+`factory.production-execution.measurement.record` on the order and follows
+the capture recorder rule. It takes a company-unique `request_id`, an active
+`measurement_type_id`, a `value` validated as that type's property value (a
+decimal as a string or Decimal), an optional `identity_id` naming one of the
+run's output lots or units (nil measures the run's output as a whole;
+anything else is `:identity_not_run_output`), an optional `note`, and an
+optional past `measured_at`, not before the run started. The measurement
+keeps the type's unit and limits as they were, and `out_of_range` is true
+when a numeric value falls outside the inclusive minimum or maximum, false
+inside them, and nil when the type had no limits or is not numeric, so a
+later change to a type's limits never restates a recorded flag.
+`correct_measurement/4` (`factory.production-execution.measurement.correct`)
+replaces a value or note with a new measurement naming the original, judged
+against the original's limits; `list_measurements/3` reads a run's
+measurements in ID order.
+
 ### Shop-floor page
 
 `/factory/floor` (`factory.production-execution.floor.view`) is the
 tablet page: pick an order, then one of its runs, then record wastage with
-large controls and see the run's yield. The order and each run also show a
-labour panel: pick a role and clock in or out, see totals per run, and, for a
-supervisor, clock in someone else, add a finished entry, or correct one.
+large controls, measure its output (out-of-range values are flagged), and
+see the run's yield. The order and each run also show a labour panel: pick
+a role and clock in or out, see totals per run, and, for a supervisor, clock
+in someone else, add a finished entry, or correct one.
 Entered times are read in the company time zone the page displays (UTC for
 a reader who displays UTC). Recording and correcting controls
 appear only with their capabilities, and the facade refuses a forged event

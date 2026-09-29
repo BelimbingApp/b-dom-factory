@@ -1,8 +1,8 @@
 defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
   @moduledoc """
   The tablet shop-floor page: pick an order, then one of its runs, then
-  record against that run with large controls: scrapped material and who
-  worked on it. Every write goes through the
+  record against that run with large controls: scrapped material, who
+  worked on it, and what its output measured. Every write goes through the
   Production Execution facade, which checks the capability on the run's
   order and records the signed-in user as the recorder; the flags here only
   decide which controls to show.
@@ -20,6 +20,8 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
   @correct_wastage "factory.production-execution.wastage.correct"
   @record_labour "factory.production-execution.labour.record"
   @manage_labour "factory.production-execution.labour.manage"
+  @record_measurement "factory.production-execution.measurement.record"
+  @correct_measurement "factory.production-execution.measurement.correct"
 
   @touch "min-h-14 px-6 text-base"
 
@@ -38,6 +40,9 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
       |> assign(:can_correct_wastage?, can?(socket, @correct_wastage))
       |> assign(:can_record_labour?, can?(socket, @record_labour))
       |> assign(:can_manage_labour?, can?(socket, @manage_labour))
+      |> assign(:can_record_measurement?, can?(socket, @record_measurement))
+      |> assign(:can_correct_measurement?, can?(socket, @correct_measurement))
+      |> assign(:measurement_correcting, nil)
       |> assign(:user_id, socket.assigns.current_scope.user["user_id"])
       |> assign(:labour_correcting, nil)
       |> assign(:labour_form, labour_form(%{}))
@@ -161,6 +166,101 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
       )
     else
       {:noreply, assign(socket, :error, "You do not have permission to correct wastage.")}
+    end
+  end
+
+  def handle_event("pick_measurement_type", %{"id" => id}, socket),
+    do:
+      {:noreply,
+       update_form(socket, :measurement_form, %{"measurement_type_id" => id, "value" => ""})}
+
+  def handle_event("change_measurement", %{"measurement" => params}, socket),
+    do: {:noreply, update_form(socket, :measurement_form, params)}
+
+  def handle_event("save_measurement", %{"measurement" => params}, socket) do
+    if socket.assigns.can_record_measurement? do
+      params = Map.merge(socket.assigns.measurement_form.params, params)
+
+      case measurement_type(socket, params["measurement_type_id"]) do
+        nil ->
+          {:noreply, assign(socket, :error, "Choose what was measured.")}
+
+        type ->
+          attrs = %{
+            request_id: params["request_id"],
+            measurement_type_id: type.id,
+            identity_id: integer(params["identity_id"]),
+            value: typed_value(type, params["value"]),
+            note: params["note"]
+          }
+
+          result(
+            socket,
+            ProductionExecution.record_measurement(
+              scope(socket),
+              company_id(socket),
+              run_id(socket),
+              attrs
+            ),
+            "Measurement recorded."
+          )
+      end
+    else
+      {:noreply, assign(socket, :error, "You do not have permission to record measurements.")}
+    end
+  end
+
+  def handle_event("start_measurement_correction", %{"id" => id}, socket) do
+    case Enum.find(socket.assigns.measurements, &(Integer.to_string(&1.id) == id)) do
+      nil ->
+        {:noreply, assign(socket, :error, "Measurement not found.")}
+
+      measurement ->
+        {:noreply,
+         socket
+         |> assign(:measurement_correcting, measurement)
+         |> assign(
+           :measurement_correction_form,
+           to_form(
+             %{
+               "request_id" => request_id(),
+               "value" => measurement.value,
+               "note" => measurement.note || "",
+               "correction_reason" => ""
+             },
+             as: :measurement_correction
+           )
+         )}
+    end
+  end
+
+  def handle_event("cancel_measurement_correction", _params, socket),
+    do: {:noreply, assign(socket, :measurement_correcting, nil)}
+
+  def handle_event("save_measurement_correction", %{"measurement_correction" => params}, socket) do
+    if socket.assigns.can_correct_measurement? do
+      measurement = socket.assigns.measurement_correcting
+      type = measurement_type(socket, measurement.measurement_type_id)
+
+      attrs = %{
+        request_id: params["request_id"],
+        value: typed_value(type, params["value"]),
+        note: params["note"],
+        correction_reason: params["correction_reason"]
+      }
+
+      result(
+        socket,
+        ProductionExecution.correct_measurement(
+          scope(socket),
+          company_id(socket),
+          measurement.id,
+          attrs
+        ),
+        "Measurement corrected."
+      )
+    else
+      {:noreply, assign(socket, :error, "You do not have permission to correct measurements.")}
     end
   end
 
@@ -311,6 +411,7 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
      socket
      |> assign(:correcting, nil)
      |> assign(:labour_correcting, nil)
+     |> assign(:measurement_correcting, nil)
      |> assign(:labour_form, labour_form(%{}))
      |> assign(:labour_entry_form, labour_entry_form(%{}))
      |> load_order()
@@ -379,6 +480,7 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
         |> assign(:run, run)
         |> assign(:correcting, nil)
         |> assign(:wastage_form, wastage_form(%{}))
+        |> assign(:measurement_correcting, nil)
         |> load_run()
     end
   end
@@ -395,7 +497,9 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
          {:ok, locations} <- Inventory.list_locations(scope, company_id, limit: 500),
          {:ok, reasons} <- ProductionExecution.list_wastage_reasons(scope, company_id),
          {:ok, wastage} <- ProductionExecution.list_wastage(scope, company_id, run.id),
-         {:ok, run_yield} <- ProductionExecution.get_run_yield(scope, company_id, run.id) do
+         {:ok, run_yield} <- ProductionExecution.get_run_yield(scope, company_id, run.id),
+         {:ok, types} <- ProductionExecution.list_measurement_types(scope, company_id),
+         {:ok, measurements} <- ProductionExecution.list_measurements(scope, company_id, run.id) do
       socket
       |> assign(:lines, lines(scope, company_id, transaction))
       |> assign(:locations, locations)
@@ -403,6 +507,9 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
       |> assign(:wastage, wastage)
       |> assign(:run_yield, run_yield)
       |> assign(:wastage_form, wastage_form(%{}))
+      |> assign(:measurement_types, types)
+      |> assign(:measurements, measurements)
+      |> assign(:measurement_form, measurement_form(%{}))
     else
       {:error, reason} -> assign(socket, :error, CodeList.error_text(reason))
     end
@@ -492,6 +599,57 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
     do: "floor:" <> Base.url_encode64(:crypto.strong_rand_bytes(18), padding: false)
 
   defp run_id(socket), do: socket.assigns.run.id
+
+  defp measurement_form(params) do
+    to_form(
+      Map.merge(
+        %{
+          "request_id" => request_id(),
+          "measurement_type_id" => "",
+          "identity_id" => "",
+          "value" => "",
+          "note" => ""
+        },
+        params
+      ),
+      as: :measurement
+    )
+  end
+
+  defp measurement_type(socket, id), do: find_type(socket.assigns.measurement_types, id)
+
+  defp find_type(types, id) do
+    id = if is_integer(id), do: id, else: integer(id)
+    Enum.find(types, &(&1.id == id))
+  end
+
+  # A form value is text; the facade validates it as the type's value type.
+  defp typed_value(%{value_type: "integer"}, value) do
+    case Integer.parse(String.trim(value || "")) do
+      {integer, ""} -> integer
+      _ -> value
+    end
+  end
+
+  defp typed_value(%{value_type: "boolean"}, value) when value in ["true", "false"],
+    do: value == "true"
+
+  defp typed_value(_type, value), do: value
+
+  defp outputs(lines), do: Enum.filter(lines, &(&1.side == "Output" and &1.identity_id))
+
+  defp measured(_lines, nil), do: "Run output"
+
+  defp measured(lines, identity_id),
+    do:
+      Enum.find_value(lines, "Unit #{identity_id}", &(&1.identity_id == identity_id && &1.label))
+
+  defp limits(measurement) do
+    [{"min", measurement.minimum}, {"target", measurement.target}, {"max", measurement.maximum}]
+    |> Enum.reject(fn {_label, value} -> is_nil(value) end)
+    |> Enum.map_join(" · ", fn {label, value} -> "#{label} #{quantity(value)}" end)
+  end
+
   defp order_id(socket), do: socket.assigns.order.id
 
   defp can_clock?(socket),
@@ -740,10 +898,80 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
             </.form>
           </.card>
 
+          {measurement_panel(assigns)}
+
           {labour_panel(assigns)}
         </section>
       </.page>
     </Layouts.app>
+    """
+  end
+
+  # Values measured on the run's output, flagged outside their limits.
+  defp measurement_panel(assigns) do
+    ~H"""
+    <div class="space-y-5">
+      <.card :if={@can_record_measurement?} id="floor-measurement-entry" title="Measure output">
+        <.form for={@measurement_form} id="measurement-form" phx-change="change_measurement" phx-submit="save_measurement" class="space-y-4 p-4">
+          <input type="hidden" name="measurement[request_id]" value={@measurement_form.params["request_id"]} />
+          <input type="hidden" name="measurement[measurement_type_id]" value={@measurement_form.params["measurement_type_id"]} />
+          <fieldset>
+            <legend class="mb-2 text-sm font-semibold">What was measured</legend>
+            <div class="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <.button :for={type <- @measurement_types} :if={type.active} type="button" phx-click="pick_measurement_type" phx-value-id={type.id} aria-pressed={to_string(@measurement_form.params["measurement_type_id"] == Integer.to_string(type.id))} variant={if @measurement_form.params["measurement_type_id"] == Integer.to_string(type.id), do: "primary"} class={@touch}>
+                {type.label}{if type.unit, do: " (#{type.unit})"}
+              </.button>
+            </div>
+            <p :if={Enum.all?(@measurement_types, &(not &1.active))} class="text-sm text-ink-muted">No active measurement types. An administrator defines them under Measurement types.</p>
+          </fieldset>
+          <.input field={@measurement_form[:identity_id]} type="select" label="Output" prompt="Run output as a whole" options={for line <- outputs(@lines), do: {line.label, line.identity_id}} class="min-h-14 text-base" />
+          <%= case find_type(@measurement_types, @measurement_form.params["measurement_type_id"]) do %>
+            <% %{value_type: "boolean"} = type -> %>
+              <.input field={@measurement_form[:value]} type="select" label={type.label} prompt="Choose" options={[{"Yes", "true"}, {"No", "false"}]} class="min-h-14 text-base" />
+            <% %{value_type: value_type} = type when value_type in ["integer", "decimal"] -> %>
+              <.input field={@measurement_form[:value]} label={"#{type.label}#{if type.unit, do: " (#{type.unit})"}"} inputmode={if value_type == "integer", do: "numeric", else: "decimal"} autocomplete="off" hint={limits(type)} class="min-h-14 text-xl" />
+            <% %{} = type -> %>
+              <.input field={@measurement_form[:value]} label={type.label} class="min-h-14 text-base" />
+            <% nil -> %>
+              <p class="text-sm text-ink-muted">Choose what was measured to enter its value.</p>
+          <% end %>
+          <.input field={@measurement_form[:note]} label="Note (optional)" />
+          <.button type="submit" variant="primary" class={[@touch, "w-full"]} phx-disable-with="Recording…">Record measurement</.button>
+        </.form>
+      </.card>
+
+      <.card id="floor-measurements" inner_class="p-0" title="Output measurements">
+        <.table id="measurements-table" rows={Enum.filter(@measurements, &is_nil(&1.corrected_by_id))} caption="Current measurements" framed={false}>
+          <:col :let={measurement} label="Measured">{Enum.find_value(@measurement_types, "—", &(&1.id == measurement.measurement_type_id && &1.label))}</:col>
+          <:col :let={measurement} label="Output">{measured(@lines, measurement.identity_id)}</:col>
+          <:col :let={measurement} label="Value">{measurement.value}{if measurement.unit, do: " #{measurement.unit}"}</:col>
+          <:col :let={measurement} label="Limits">{limits(measurement)}</:col>
+          <:col :let={measurement} label="Check">
+            <.badge :if={measurement.out_of_range == true} kind={:danger}>Out of range</.badge>
+            <.badge :if={measurement.out_of_range == false} kind={:success}>In range</.badge>
+          </:col>
+          <:col :let={measurement} label="When"><.datetime id={"measurement-#{measurement.id}-at"} value={measurement.measured_at} /></:col>
+          <:col :let={measurement} label="Corrected">{if measurement.corrects_id, do: measurement.correction_reason, else: ""}</:col>
+          <:action :let={measurement}>
+            <.button :if={@can_correct_measurement?} type="button" phx-click="start_measurement_correction" phx-value-id={measurement.id} class={@touch}>Correct</.button>
+          </:action>
+          <:empty :if={Enum.all?(@measurements, & &1.corrected_by_id)} title="No measurements" reason="Nothing has been measured on this run's output yet." />
+        </.table>
+      </.card>
+
+      <.card :if={@measurement_correcting} id="measurement-correction" title="Correct measurement">
+        <.form for={@measurement_correction_form} id="measurement-correction-form" phx-submit="save_measurement_correction" class="space-y-4 p-4">
+          <input type="hidden" name="measurement_correction[request_id]" value={@measurement_correction_form.params["request_id"]} />
+          <.input field={@measurement_correction_form[:value]} label="Corrected value" class="min-h-14 text-xl" />
+          <.input field={@measurement_correction_form[:note]} label="Note" />
+          <.input field={@measurement_correction_form[:correction_reason]} label="Why is this corrected?" />
+          <div class="flex gap-3">
+            <.button type="submit" variant="primary" class={@touch}>Save correction</.button>
+            <.button type="button" phx-click="cancel_measurement_correction" class={@touch}>Cancel</.button>
+          </div>
+        </.form>
+      </.card>
+    </div>
     """
   end
 

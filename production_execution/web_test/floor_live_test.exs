@@ -13,6 +13,8 @@ defmodule BilimbiWeb.FactoryFloorLiveTest do
   @correct_wastage "factory.production-execution.wastage.correct"
   @record_labour "factory.production-execution.labour.record"
   @manage_labour "factory.production-execution.labour.manage"
+  @record_measurement "factory.production-execution.measurement.record"
+  @correct_measurement "factory.production-execution.measurement.correct"
 
   setup do
     UserFixtures.create_user_tables!()
@@ -31,7 +33,17 @@ defmodule BilimbiWeb.FactoryFloorLiveTest do
     {:ok, role} =
       ProductionExecution.create_labour_role(context.scope, 73, %{code: "ROLE_A", label: "Role A"})
 
-    Map.merge(context, %{reason: reason, role: role})
+    {:ok, measure} =
+      ProductionExecution.create_measurement_type(context.scope, 73, %{
+        code: "MEASURE_A",
+        label: "Measure A",
+        value_type: "decimal",
+        unit: "g/m2",
+        minimum: "95",
+        maximum: "105"
+      })
+
+    Map.merge(context, %{reason: reason, role: role, measure: measure})
   end
 
   defp run_path(context),
@@ -195,5 +207,66 @@ defmodule BilimbiWeb.FactoryFloorLiveTest do
 
     assert has_element?(view, "#labour-table td", "Left early")
     assert has_element?(view, "#labour-total", "1h 00m")
+  end
+
+  test "an operator measures an output and an out-of-range value is flagged",
+       %{conn: conn} = context do
+    grant_capabilities!([@floor, @record_measurement])
+    {:ok, view, _html} = conn |> log_in_as() |> live(run_path(context))
+
+    render_click(element(view, "button[phx-click='pick_measurement_type']", "Measure A"))
+
+    view
+    |> form("#measurement-form", measurement: %{identity_id: context.sheet_unit, value: "110"})
+    |> render_submit()
+
+    assert has_element?(view, "#measurements-table td", "110 g/m2")
+    assert has_element?(view, "#measurements-table", "Out of range")
+    refute has_element?(view, "button[phx-click='start_measurement_correction']")
+
+    assert {:ok, [measurement]} =
+             ProductionExecution.list_measurements(context.scope, 73, context.run.id)
+
+    assert measurement.out_of_range and measurement.identity_id == context.sheet_unit
+    assert measurement.recorded_by_id == 91
+  end
+
+  test "a viewer cannot record a measurement by a forged event", %{conn: conn} = context do
+    grant_capabilities!([@floor])
+    {:ok, view, _html} = conn |> log_in_as() |> live(run_path(context))
+    refute has_element?(view, "#measurement-form")
+
+    assert render_hook(view, "save_measurement", %{"measurement" => %{"value" => "1"}}) =~
+             "permission to record measurements"
+  end
+
+  test "a supervisor corrects a measurement back into range", %{conn: conn} = context do
+    grant_capabilities!([@floor, @record_measurement, @correct_measurement])
+
+    {:ok, measured} =
+      ProductionExecution.record_measurement(
+        Bilimbi.Base.Tenancy.Authentication.sign_in(context.scope, 91, 73),
+        73,
+        context.run.id,
+        %{request_id: "M-1", measurement_type_id: context.measure.id, value: "110"}
+      )
+
+    {:ok, view, _html} = conn |> log_in_as() |> live(run_path(context))
+
+    render_click(
+      element(
+        view,
+        "button[phx-click='start_measurement_correction'][phx-value-id='#{measured.id}']"
+      )
+    )
+
+    view
+    |> form("#measurement-correction-form",
+      measurement_correction: %{value: "101", correction_reason: "Misread"}
+    )
+    |> render_submit()
+
+    assert has_element?(view, "#measurements-table", "In range")
+    refute has_element?(view, "#measurements-table", "Out of range")
   end
 end

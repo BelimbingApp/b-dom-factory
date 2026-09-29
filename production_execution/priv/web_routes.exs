@@ -16,5 +16,11 @@
     live: Bilimbi.Factory.ProductionExecution.Web.LabourRolesLive,
     session: :auth,
     capability: "factory.production-execution.configuration.view"
+  },
+  %{
+    path: "/factory/measurement-types",
+    live: Bilimbi.Factory.ProductionExecution.Web.MeasurementTypesLive,
+    session: :auth,
+    capability: "factory.production-execution.configuration.view"
   }
 ]

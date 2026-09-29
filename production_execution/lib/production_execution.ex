@@ -10,10 +10,11 @@ defmodule Bilimbi.Factory.ProductionExecution do
   refused. Historical imports keep their source approver as separate evidence.
 
   Shop-floor capture against a run (an execution) follows the same recorder
-  rule: wastage, posted through Inventory as scrap tied to the run, and the
-  labour time company users work on an order and its runs, each with
-  append-only corrections. The company's wastage reasons and labour roles are
-  its configuration.
+  rule: wastage, posted through Inventory as scrap tied to the run; the
+  labour time company users work on an order and its runs; and values
+  measured on a run's output, flagged when outside their limits; each with
+  append-only corrections. The company's wastage reasons, labour roles, and
+  measurement types are its configuration.
   """
   import Ecto.Query
   alias Bilimbi.Base.Repo
@@ -28,6 +29,7 @@ defmodule Bilimbi.Factory.ProductionExecution do
   alias Bilimbi.Factory.ProductionExecution.Trace
   alias Bilimbi.Factory.ProductionExecution.Yield
   alias Bilimbi.Factory.ProductionExecution.Labour
+  alias Bilimbi.Factory.ProductionExecution.Measurement
   alias Bilimbi.Factory.ProductionExecution.Schemas.{Execution, LabourRole, Order, WastageReason}
   alias Bilimbi.Factory.ProductionExecution.Wastage
 
@@ -35,6 +37,8 @@ defmodule Bilimbi.Factory.ProductionExecution do
   @wastage_correct "factory.production-execution.wastage.correct"
   @labour_record "factory.production-execution.labour.record"
   @labour_manage "factory.production-execution.labour.manage"
+  @measurement_record "factory.production-execution.measurement.record"
+  @measurement_correct "factory.production-execution.measurement.correct"
 
   @order_fields [
     :id,
@@ -914,6 +918,125 @@ defmodule Bilimbi.Factory.ProductionExecution do
   def labour_summary(%Scope{} = scope, company_id, order_id) do
     with {:ok, entries} <- list_labour(scope, company_id, order_id),
          do: {:ok, Labour.summary(entries)}
+  end
+
+  # ============================================================================
+  # Output measurements
+  # ============================================================================
+
+  @doc "Lists the company's measurement types by code; `active: true` keeps those offered for new measurements."
+  def list_measurement_types(%Scope{} = scope, company_id, opts \\ []) do
+    with {:ok, _company} <- company(scope, company_id),
+         do: {:ok, Measurement.list_types(company_id, opts)}
+  end
+
+  def get_measurement_type(%Scope{} = scope, company_id, type_id) do
+    with {:ok, _company} <- company(scope, company_id),
+         do: Measurement.get_type(company_id, type_id)
+  end
+
+  @doc """
+  Defines a measurement type: `code` (upper-cased, unique in the company),
+  `label`, `value_type` and optional `unit` validated as one
+  `Bilimbi.Factory.Inventory.PropertyDefinition` (a unit only on a numeric
+  type), optional decimal `minimum`, `maximum`, and `target` for a numeric
+  type (minimum not above maximum), and optional `active`. The code, value
+  type, and unit are fixed once created.
+  """
+  def create_measurement_type(%Scope{} = scope, company_id, attrs) when is_map(attrs) do
+    with {:ok, _company} <- company(scope, company_id),
+         do: Measurement.create_type(company_id, attrs)
+  end
+
+  @doc "Changes a measurement type's `label`, `minimum`, `maximum`, `target` (blank removes a limit), or `active`. Recorded measurements keep the limits they were judged against."
+  def update_measurement_type(%Scope{} = scope, company_id, type_id, attrs) when is_map(attrs) do
+    with {:ok, _company} <- company(scope, company_id),
+         do: Measurement.update_type(company_id, type_id, attrs)
+  end
+
+  @doc """
+  Records a value measured on a run's output. Needs
+  `factory.production-execution.measurement.record` on the order, with the
+  same recorder rule as wastage. Attributes: company-unique `request_id`, an
+  active `measurement_type_id`, `value` of the type's value type (a decimal
+  as a string or Decimal), optional `identity_id` naming one of the run's
+  output lots or units (nil measures the run's output as a whole), optional
+  `note`, and optional past `measured_at` (default now, not before the run
+  started). The measurement keeps the type's unit and limits, and
+  `out_of_range` is true when a numeric value falls outside the inclusive
+  minimum or maximum, false inside them, and nil when there were none.
+  """
+  def record_measurement(%Scope{} = scope, company_id, execution_id, attrs) when is_map(attrs) do
+    with {:ok, execution} <- get_execution(scope, company_id, execution_id),
+         {:ok, recorder} <- Capture.recorder(scope, company_id),
+         :ok <- Capture.authorize(scope, company_id, execution.order_id, @measurement_record),
+         {:ok, transaction} <-
+           Inventory.get_transaction(scope, company_id, execution.inventory_transaction_id),
+         {:ok, request} <- Measurement.validate_record(company_id, execution, transaction, attrs) do
+      Repo.transaction(fn ->
+        lock_order!(company_id, execution.order_id)
+
+        case Measurement.by_request(company_id, request.request_id) do
+          nil ->
+            request
+            |> Map.merge(recorder)
+            |> Map.put(:company_id, company_id)
+            |> Measurement.insert!()
+            |> Measurement.read()
+
+          existing ->
+            replay(existing, request, &Measurement.read/1)
+        end
+      end)
+    end
+  end
+
+  def record_measurement(%Scope{}, _company_id, _execution_id, _attrs),
+    do: {:error, :invalid_measurement}
+
+  @doc """
+  Corrects a measurement with a new one that names it; the original is never
+  changed and a measurement is corrected at most once. Needs
+  `factory.production-execution.measurement.correct` on the order.
+  Attributes: company-unique `request_id`, nonblank `correction_reason`, the
+  corrected `value`, and optionally `note`. The correction is judged against
+  the corrected measurement's limits.
+  """
+  def correct_measurement(%Scope{} = scope, company_id, measurement_id, attrs)
+      when is_map(attrs) do
+    with {:ok, _company} <- company(scope, company_id),
+         {:ok, measurement} <- Measurement.get(company_id, measurement_id),
+         {:ok, recorder} <- Capture.recorder(scope, company_id),
+         :ok <- Capture.authorize(scope, company_id, measurement.order_id, @measurement_correct),
+         {:ok, request} <- Measurement.validate_correction(company_id, measurement, attrs) do
+      Repo.transaction(fn ->
+        lock_order!(company_id, measurement.order_id)
+
+        case Measurement.by_request(company_id, request.request_id) do
+          nil ->
+            if Measurement.corrected?(measurement),
+              do: Repo.rollback(:measurement_already_corrected)
+
+            request
+            |> Map.merge(recorder)
+            |> Map.put(:company_id, company_id)
+            |> Measurement.insert!()
+            |> Measurement.read()
+
+          existing ->
+            replay(existing, request, &Measurement.read/1)
+        end
+      end)
+    end
+  end
+
+  def correct_measurement(%Scope{}, _company_id, _measurement_id, _attrs),
+    do: {:error, :invalid_measurement}
+
+  @doc "Lists a run's measurements in ID order; `corrected_by_id` names a measurement's correction, and those without one are current."
+  def list_measurements(%Scope{} = scope, company_id, execution_id) do
+    with {:ok, execution} <- get_execution(scope, company_id, execution_id),
+         do: {:ok, Measurement.list(company_id, execution.id)}
   end
 
   defp new_labour(scope, company_id, order_id, attrs, times) do
