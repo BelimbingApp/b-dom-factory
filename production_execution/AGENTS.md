@@ -50,6 +50,24 @@
   `get_run_yield/3` and `get_unit_yield/3`. Their sources are the existing
   Inventory ledger and execution link, so do not parse line evidence or keep
   another yield or location store.
+- For shop-floor capture against a run, resolve the recorder with
+  `Capture.recorder/2` and decide with `Capture.authorize/4` before opening a
+  transaction (`lib/production_execution/capture.ex`); keep the evidence
+  append-only and correct it with a new row naming the corrected one, as
+  `lib/production_execution/wastage.ex` does. Never update a capture row;
+  the one exception is closing an open labour entry, which the migration's
+  trigger allows once (`lib/production_execution/labour.ex`).
+- A company's shop-floor code list (code, label, active) is a table read
+  through `lib/production_execution/capture_codes.ex` and administered with
+  `Web.CodeList`; do not hard-code the entries or build another admin screen
+  for one.
+- To enlarge form fields on a touch page, size them from the form
+  (`[&_input]:min-h-14`) as `lib/production_execution/web/floor_live.ex`
+  does; Base UI's `<.input class=...>` replaces the input's own classes and
+  drops its border.
+- Inventory production postings must be called lexically in the facade
+  module: the compiled-graph boundary test accepts only the declared
+  authority module, so a helper module that posts fails CI.
 
 ## Maintaining this file
 
