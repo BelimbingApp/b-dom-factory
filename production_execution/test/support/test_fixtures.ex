@@ -1,8 +1,9 @@
 defmodule Bilimbi.Factory.ProductionExecution.TestFixtures do
   @moduledoc """
-  Temporary Product Definition and Production Execution tables for
-  public-API tests, beside Inventory's (`mill!/0` creates those). Mirror a
-  migration's constraints here when persistence changes.
+  Temporary Production Execution tables for public-API tests, beside
+  Inventory's (`mill!/0` creates those) and Product Definition's (created
+  through its own fixtures). Mirror a migration's constraints here when
+  persistence changes.
   """
 
   alias Bilimbi.Base.Repo
@@ -12,12 +13,12 @@ defmodule Bilimbi.Factory.ProductionExecution.TestFixtures do
   alias Ecto.Adapters.SQL
 
   def create_production_tables! do
+    # Product Definition's tables are defined once, by its own fixtures: a
+    # restated copy of another shape breaks Postgrex's cached plans when both
+    # run in one Web test suite.
+    apply(Bilimbi.Factory.ProductDefinition.TestFixtures, :create_definition_tables!, [])
+
     for sql <- [
-          "CREATE TEMPORARY TABLE factory_products (id bigserial PRIMARY KEY, company_id bigint NOT NULL REFERENCES companies(id), item_id bigint NOT NULL REFERENCES commerce_inventory_items(id), code text NOT NULL, name text NOT NULL, inserted_at timestamp(0) NOT NULL, updated_at timestamp(0) NOT NULL, UNIQUE(company_id, code), UNIQUE(company_id, item_id)) ON COMMIT PRESERVE ROWS",
-          "CREATE TEMPORARY TABLE factory_resource_types (id bigserial PRIMARY KEY, company_id bigint NOT NULL REFERENCES companies(id), code text NOT NULL, name text NOT NULL, property_definitions jsonb[] NOT NULL, retired_at timestamp(0), inserted_at timestamp(0) NOT NULL, updated_at timestamp(0) NOT NULL, CONSTRAINT factory_resource_types_company_code_unique UNIQUE (company_id, code), UNIQUE(id, company_id)) ON COMMIT PRESERVE ROWS",
-          "CREATE TEMPORARY TABLE factory_resources (id bigserial PRIMARY KEY, company_id bigint NOT NULL REFERENCES companies(id), code text NOT NULL, name text NOT NULL, resource_type_id bigint NOT NULL, properties jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(properties) = 'object'), retired_at timestamp(0), inserted_at timestamp(0) NOT NULL, updated_at timestamp(0) NOT NULL, UNIQUE(company_id, code), CONSTRAINT factory_resources_resource_type_id_fkey FOREIGN KEY (resource_type_id, company_id) REFERENCES factory_resource_types (id, company_id)) ON COMMIT PRESERVE ROWS",
-          "CREATE TEMPORARY TABLE factory_formula_revisions (id bigserial PRIMARY KEY, company_id bigint NOT NULL REFERENCES companies(id), product_id bigint NOT NULL REFERENCES factory_products(id), version integer NOT NULL, lines jsonb[] NOT NULL, process_config jsonb NOT NULL, inserted_at timestamp(0) NOT NULL, UNIQUE(product_id, version)) ON COMMIT PRESERVE ROWS",
-          "CREATE TEMPORARY TABLE factory_routing_revisions (id bigserial PRIMARY KEY, company_id bigint NOT NULL REFERENCES companies(id), product_id bigint NOT NULL REFERENCES factory_products(id), version integer NOT NULL, operations jsonb[] NOT NULL, process_config jsonb NOT NULL, inserted_at timestamp(0) NOT NULL, UNIQUE(product_id, version)) ON COMMIT PRESERVE ROWS",
           "CREATE TEMPORARY TABLE factory_production_orders (id bigserial PRIMARY KEY, company_id bigint NOT NULL REFERENCES companies(id), code text NOT NULL, kind text NOT NULL CHECK (kind IN ('order', 'batch')), product_id bigint NOT NULL REFERENCES factory_products(id), formula_version integer NOT NULL CHECK (formula_version > 0), routing_version integer NOT NULL CHECK (routing_version > 0), demand_ref text, inserted_at timestamp(0) NOT NULL, updated_at timestamp(0) NOT NULL, UNIQUE(company_id, code)) ON COMMIT PRESERVE ROWS",
           "CREATE TEMPORARY TABLE factory_operation_executions (id bigserial PRIMARY KEY, company_id bigint NOT NULL REFERENCES companies(id), order_id bigint NOT NULL REFERENCES factory_production_orders(id), request_id text NOT NULL, request_fingerprint text NOT NULL, source text NOT NULL CHECK (source IN ('live', 'import')), operation_code text NOT NULL, resource_id bigint NOT NULL REFERENCES factory_resources(id), operator_type text NOT NULL, operator_id bigint NOT NULL, started_at timestamp(6) NOT NULL, completed_at timestamp(6) NOT NULL CHECK (started_at <= completed_at), inputs jsonb[] NOT NULL, outputs jsonb[] NOT NULL, variance jsonb, evidence text NOT NULL, inventory_transaction_id bigint NOT NULL, formula_version integer NOT NULL, routing_version integer NOT NULL, inserted_at timestamp(0) NOT NULL, UNIQUE(company_id, request_id)) ON COMMIT PRESERVE ROWS",
           "CREATE TEMPORARY TABLE factory_material_hold_overrides (id bigserial PRIMARY KEY, company_id bigint NOT NULL REFERENCES companies(id), execution_id bigint NOT NULL REFERENCES factory_operation_executions(id), inventory_transaction_id bigint NOT NULL REFERENCES factory_inventory_transactions(id), source_transaction_id bigint NOT NULL REFERENCES factory_inventory_transactions(id), identity_id bigint NOT NULL REFERENCES factory_inventory_identities(id), item_id bigint NOT NULL REFERENCES commerce_inventory_items(id), source text NOT NULL, actor_type text, actor_id bigint, acting_for_user_id bigint, recorded_by_type text NOT NULL, recorded_by_id bigint NOT NULL, recorded_by_acting_for_user_id bigint, reason text NOT NULL CHECK (length(btrim(reason)) > 0), evidence text, occurred_at timestamp(6) NOT NULL, CHECK ((source = 'live' AND evidence IS NULL AND actor_type = recorded_by_type AND actor_id = recorded_by_id AND acting_for_user_id IS NOT DISTINCT FROM recorded_by_acting_for_user_id) OR (source = 'import' AND length(btrim(evidence)) > 0)), UNIQUE(execution_id, identity_id)) ON COMMIT PRESERVE ROWS"

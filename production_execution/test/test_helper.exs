@@ -6,6 +6,7 @@ Code.require_file(Path.expand("../../../../base/settings/test/support/test_fixtu
 Code.require_file(Path.expand("../../../../core/employee/test/support/test_fixtures.ex", __DIR__))
 Code.require_file(Path.expand("../../../../core/user/test/support/test_fixtures.ex", __DIR__))
 Code.require_file(Path.expand("../../inventory/test/support/test_fixtures.ex", __DIR__))
+Code.require_file(Path.expand("../../product_definition/test/support/test_fixtures.ex", __DIR__))
 Code.require_file(Path.expand("support/test_fixtures.ex", __DIR__))
 
 # Module-local tests do not load Base Audit; composed-host tests cover capture.
