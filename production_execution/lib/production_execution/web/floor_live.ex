@@ -412,6 +412,7 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
   defp result(socket, {:ok, _record}, message) do
     {:noreply,
      socket
+     |> assign(:error, nil)
      |> assign(:correcting, nil)
      |> assign(:labour_correcting, nil)
      |> assign(:measurement_correcting, nil)

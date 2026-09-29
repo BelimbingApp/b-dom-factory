@@ -161,6 +161,22 @@ defmodule BilimbiWeb.FactoryFloorLiveTest do
              "permission to manage labour"
   end
 
+  test "a successful action clears a refused action's error", %{conn: conn} = context do
+    grant_capabilities!([@floor, @record_labour])
+    {:ok, view, _html} = conn |> log_in_as() |> live(run_path(context))
+
+    render_click(element(view, "button[phx-click='pick_role']", "Role A"))
+    view |> form("#labour-form") |> render_submit()
+    render_click(element(view, "button[phx-click='pick_role']", "Role A"))
+    view |> form("#labour-form") |> render_submit()
+    assert has_element?(view, "#floor-error")
+
+    {:ok, [entry]} = ProductionExecution.list_labour(context.scope, 73, context.order.id)
+    render_click(element(view, "button[phx-click='clock_out'][phx-value-id='#{entry.id}']"))
+
+    refute has_element?(view, "#floor-error")
+  end
+
   test "a supervisor adds a finished entry for someone else and corrects it",
        %{conn: conn} = context do
     UserFixtures.insert_user!(%{
