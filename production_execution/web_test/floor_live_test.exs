@@ -209,6 +209,54 @@ defmodule BilimbiWeb.FactoryFloorLiveTest do
     assert has_element?(view, "#labour-total", "1h 00m")
   end
 
+  test "a role-only labour correction keeps the entry's exact times",
+       %{conn: conn} = context do
+    UserFixtures.insert_user!(%{
+      id: 92,
+      company_id: 73,
+      name: "Helper",
+      email: "helper@example.com"
+    })
+
+    grant_capabilities!([@floor, @manage_labour])
+
+    {:ok, role_b} =
+      ProductionExecution.create_labour_role(context.scope, 73, %{code: "ROLE_B", label: "Role B"})
+
+    {:ok, view, _html} =
+      conn |> log_in_as() |> live(~p"/factory/floor?#{[order: context.order.id]}")
+
+    view
+    |> form("#labour-entry-form",
+      entry: %{
+        worker_user_id: 92,
+        role_id: context.role.id,
+        started_at: "2026-01-05T08:00:25",
+        stopped_at: "2026-01-05T10:30:40"
+      }
+    )
+    |> render_submit()
+
+    assert {:ok, [entry]} = ProductionExecution.list_labour(context.scope, 73, context.order.id)
+    assert entry.started_at == ~U[2026-01-05 08:00:25.000000Z]
+
+    render_click(
+      element(view, "button[phx-click='start_labour_correction'][phx-value-id='#{entry.id}']")
+    )
+
+    view
+    |> form("#labour-correction-form",
+      labour_correction: %{role_id: role_b.id, correction_reason: "Wrong role"}
+    )
+    |> render_submit()
+
+    assert {:ok, entries} = ProductionExecution.list_labour(context.scope, 73, context.order.id)
+    assert %{} = corrected = Enum.find(entries, &(&1.corrects_id == entry.id))
+    assert corrected.role_id == role_b.id
+    assert corrected.started_at == ~U[2026-01-05 08:00:25.000000Z]
+    assert corrected.stopped_at == ~U[2026-01-05 10:30:40.000000Z]
+  end
+
   test "an operator measures an output and an out-of-range value is flagged",
        %{conn: conn} = context do
     grant_capabilities!([@floor, @record_measurement])

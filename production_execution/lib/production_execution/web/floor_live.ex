@@ -377,27 +377,26 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
 
   def handle_event("save_labour_correction", %{"labour_correction" => params}, socket) do
     if socket.assigns.can_manage_labour? do
-      stopped_at =
-        if params["stopped_at"] in [nil, ""],
-          do: {:ok, nil},
-          else: local_time(params["stopped_at"])
+      entry = socket.assigns.labour_correcting
 
-      with {:ok, started_at} <- local_time(params["started_at"]),
-           {:ok, stopped_at} <- stopped_at do
-        attrs = %{
-          request_id: params["request_id"],
-          role_id: integer(params["role_id"]),
-          started_at: started_at,
-          stopped_at: stopped_at,
-          correction_reason: params["correction_reason"]
-        }
+      with {:ok, started_at} <- corrected_time(params["started_at"], entry.started_at),
+           {:ok, stopped_at} <- corrected_time(params["stopped_at"], entry.stopped_at) do
+        attrs =
+          Map.merge(
+            %{
+              request_id: params["request_id"],
+              role_id: integer(params["role_id"]),
+              correction_reason: params["correction_reason"]
+            },
+            Map.reject(%{started_at: started_at, stopped_at: stopped_at}, &(elem(&1, 1) == :keep))
+          )
 
         result(
           socket,
           ProductionExecution.correct_labour(
             scope(socket),
             company_id(socket),
-            socket.assigns.labour_correcting.id,
+            entry.id,
             attrs
           ),
           "Labour corrected."
@@ -708,6 +707,14 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
   end
 
   defp local_time(_value), do: :error
+
+  defp corrected_time(value, original) do
+    cond do
+      (value || "") == local_input(original) -> {:ok, :keep}
+      value in [nil, ""] -> {:ok, nil}
+      true -> local_time(value)
+    end
+  end
 
   defp from_naive(naive, zone, db) do
     case DateTime.from_naive(naive, zone, db) do
