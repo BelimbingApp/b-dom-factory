@@ -373,13 +373,14 @@ defmodule Bilimbi.Factory.Inventory.TestFixtures do
   A mill in tenant 41 (company 73, with a sister company 74), and a customer
   tenant 42, with kilogram-native coil, finished, trim, and scrap materials,
   a coil unit converting to kilograms, and three locations. Both companies
-  have example item settings (`configure_item_settings!/3`).
+  have example item settings (`configure_item_settings!/3`). A Web test that
+  already created the company tables passes `company_tables?: false`.
   """
-  def mill! do
+  def mill!(opts \\ []) do
     alias Bilimbi.Base.Tenancy
     alias Bilimbi.Factory.Inventory
 
-    create_inventory_tables!()
+    create_inventory_tables!(opts)
     insert_tenant!(%{id: 41, name: "Operator"})
     insert_tenant!(%{id: 42, name: "Customer", is_platform_operator: false})
     insert_company!(%{id: 73, tenant_id: 41, name: "Mill", code: "mill"})

@@ -28,7 +28,7 @@ company is reported as not found. Results are read models (`Item`, `Unit`,
 | Material identity | `register_material/5`, `create_material/5`, `get_material/3`, `list_materials/3`, `update_material/5`, `retire_material/3` |
 | Conversions | `define_conversion/5`, `list_conversions/3`, `get_conversion/5` |
 | Stock position | `get_stock_position/4` |
-| Ledger postings | `record_receipt/3`, `record_transfer/3`, `record_consumption/3`, `record_correction/3` |
+| Ledger postings | `observations/0`, `record_receipt/3`, `record_transfer/3`, `record_consumption/3`, `record_correction/3` |
 | Production postings | `record_output/4`, `record_transform/4`, `record_production_consumption/4`, `record_production_correction/4` |
 | Ledger reads | `get_transaction/3`, `list_transactions/3`, `list_corrections/3`, `get_transaction_balance/3` |
 | Lot and unit genealogy | `get_identity/3`, `get_identity_positions/3`, `trace_backward/3`, `trace_forward/3`, `list_identity_draws/3` |

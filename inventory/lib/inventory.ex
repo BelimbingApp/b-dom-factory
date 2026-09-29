@@ -729,6 +729,10 @@ defmodule Bilimbi.Factory.Inventory do
   # Material Transaction ledger
   # ============================================================================
 
+  @doc "The ways a posted quantity may have been obtained, as a line's `observation` names them."
+  @spec observations() :: [String.t()]
+  def observations, do: Ledger.Request.observations()
+
   @doc """
   Records material received into stock from outside it.
 

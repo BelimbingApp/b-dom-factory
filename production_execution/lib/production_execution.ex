@@ -8,6 +8,11 @@ defmodule Bilimbi.Factory.ProductionExecution do
   A material hold override is authorized against the authenticated user sealed
   on the Scope, who is recorded as its recorder; an impersonated session is
   refused. Historical imports keep their source approver as separate evidence.
+
+  Shop-floor capture against a run (an execution) follows the same recorder
+  rule: wastage, posted through Inventory as scrap tied to the run, with
+  append-only corrections. The company's wastage reasons are its
+  configuration.
   """
   import Ecto.Query
   alias Bilimbi.Base.Repo
@@ -16,10 +21,16 @@ defmodule Bilimbi.Factory.ProductionExecution do
   alias Bilimbi.Core.Company
   alias Bilimbi.Factory.Inventory
   alias Bilimbi.Factory.ProductDefinition
+  alias Bilimbi.Factory.ProductionExecution.Capture
+  alias Bilimbi.Factory.ProductionExecution.CaptureCodes
   alias Bilimbi.Factory.ProductionExecution.HoldOverride
   alias Bilimbi.Factory.ProductionExecution.Trace
   alias Bilimbi.Factory.ProductionExecution.Yield
-  alias Bilimbi.Factory.ProductionExecution.Schemas.{Execution, Order}
+  alias Bilimbi.Factory.ProductionExecution.Schemas.{Execution, Order, WastageReason}
+  alias Bilimbi.Factory.ProductionExecution.Wastage
+
+  @wastage_record "factory.production-execution.wastage.record"
+  @wastage_correct "factory.production-execution.wastage.correct"
 
   @order_fields [
     :id,
@@ -93,6 +104,37 @@ defmodule Bilimbi.Factory.ProductionExecution do
     end
   end
 
+  @doc "Lists a company's orders and batches, most recently created first, capped by `:limit` (default 50, at most 500)."
+  def list_orders(%Scope{} = scope, company_id, opts \\ []) do
+    opts = Keyword.validate!(opts, limit: 50)
+
+    with {:ok, _company} <- company(scope, company_id) do
+      {:ok,
+       Repo.all(
+         from(o in Order,
+           where: o.company_id == ^company_id,
+           order_by: [desc: o.id],
+           limit: ^min(max(opts[:limit], 1), 500)
+         )
+       )
+       |> Enum.map(&Map.take(&1, @order_fields))}
+    end
+  end
+
+  @doc "Lists an order's executions (its runs), most recently completed first."
+  def list_executions(%Scope{} = scope, company_id, order_id) do
+    with {:ok, order} <- get_order(scope, company_id, order_id) do
+      {:ok,
+       Repo.all(
+         from(e in Execution,
+           where: e.company_id == ^company_id and e.order_id == ^order.id,
+           order_by: [desc: e.completed_at, desc: e.id]
+         )
+       )
+       |> Enum.map(&Map.take(&1, @execution_fields))}
+    end
+  end
+
   @doc """
   Completes one routed operation. `source` is `:live` or `:import`; both use
   identical validation and posting, but an import first requires the
@@ -110,12 +152,7 @@ defmodule Bilimbi.Factory.ProductionExecution do
          {:ok, request} <- validate(scope, company_id, order, selected, source, attrs),
          {:ok, overrides} <- check_holds(scope, company_id, request) do
       Repo.transaction(fn ->
-        Repo.one!(
-          from(o in Order,
-            where: o.id == ^order_id and o.company_id == ^company_id,
-            lock: "FOR UPDATE"
-          )
-        )
+        lock_order!(company_id, order_id)
 
         case Repo.get_by(Execution, company_id: company_id, request_id: request.request_id) do
           nil ->
@@ -213,11 +250,7 @@ defmodule Bilimbi.Factory.ProductionExecution do
   end
 
   defp commit(scope, company_id, order, request, overrides) do
-    context = %{
-      operation_execution: request.request_id,
-      order_or_batch: order.code,
-      work_centre: Integer.to_string(request.resource_id)
-    }
+    context = run_context(request, order)
 
     posting = %{
       request_id: "pe:" <> request.request_id,
@@ -576,6 +609,215 @@ defmodule Bilimbi.Factory.ProductionExecution do
     else
       {:error, :hold_override_denied}
     end
+  end
+
+  # ============================================================================
+  # Wastage
+  # ============================================================================
+
+  @doc "Lists the company's wastage reasons by code; `active: true` keeps those offered for new records."
+  def list_wastage_reasons(%Scope{} = scope, company_id, opts \\ []) do
+    with {:ok, _company} <- company(scope, company_id),
+         do: {:ok, CaptureCodes.list(WastageReason, company_id, opts)}
+  end
+
+  def get_wastage_reason(%Scope{} = scope, company_id, reason_id) do
+    with {:ok, _company} <- company(scope, company_id),
+         do: CaptureCodes.get(WastageReason, company_id, reason_id, :wastage_reason_not_found)
+  end
+
+  @doc "Defines a wastage reason from `code` (upper-cased, unique in the company, fixed once created), `label`, and optional `active`."
+  def create_wastage_reason(%Scope{} = scope, company_id, attrs) when is_map(attrs) do
+    with {:ok, _company} <- company(scope, company_id),
+         do: CaptureCodes.create(WastageReason, company_id, attrs)
+  end
+
+  @doc "Changes a wastage reason's `label` or `active`; its code stays fixed so recorded wastage keeps its meaning."
+  def update_wastage_reason(%Scope{} = scope, company_id, reason_id, attrs) when is_map(attrs) do
+    with {:ok, _company} <- company(scope, company_id),
+         do:
+           CaptureCodes.update(
+             WastageReason,
+             company_id,
+             reason_id,
+             attrs,
+             :wastage_reason_not_found
+           )
+  end
+
+  @doc """
+  Records material scrapped on a run (an execution) for one of the company's
+  active wastage reasons, and posts it through Inventory as production
+  consumption carrying the run's execution, order, and resource context.
+
+  Needs the `factory.production-execution.wastage.record` capability on the
+  run's order, held by the Scope's authenticated user in the company, who is
+  recorded as the recorder; an impersonated session is refused. Attributes:
+  company-unique `request_id` (an identical retry returns the original
+  record), `reason_id`, `item_id` and optional `identity_id` naming one of
+  the run's posted stock lines, the `location_id` it is drawn from, positive
+  `quantity` in that material's native unit, `observation` (one of
+  `Inventory.observations/0`), optional `note`, and optional past
+  `occurred_at` (default now, not before the run started).
+  """
+  def record_wastage(%Scope{} = scope, company_id, execution_id, attrs) when is_map(attrs) do
+    with {:ok, execution} <- get_execution(scope, company_id, execution_id),
+         {:ok, recorder} <- Capture.recorder(scope, company_id),
+         :ok <- Capture.authorize(scope, company_id, execution.order_id, @wastage_record),
+         {:ok, order} <- get_order(scope, company_id, execution.order_id),
+         {:ok, transaction} <-
+           Inventory.get_transaction(scope, company_id, execution.inventory_transaction_id),
+         {:ok, request} <-
+           Wastage.validate_record(scope, company_id, execution, transaction, attrs) do
+      Repo.transaction(fn ->
+        lock_order!(company_id, order.id)
+
+        case Wastage.by_request(company_id, request.request_id) do
+          nil ->
+            posting = %{
+              request_id: "pe:wastage:" <> request.request_id,
+              actor_type: recorder.recorded_by_type,
+              actor_id: recorder.recorded_by_id,
+              evidence: Wastage.evidence(request.reason, request.note),
+              effective_at: request.occurred_at,
+              context: run_context(execution, order),
+              lines: [wastage_line(request, request.quantity)]
+            }
+
+            case Inventory.record_production_consumption(scope, company_id, posting, __MODULE__) do
+              {:ok, transaction} ->
+                request
+                |> Map.merge(recorder)
+                |> Map.merge(%{company_id: company_id, inventory_transaction_id: transaction.id})
+                |> Wastage.insert!()
+                |> Wastage.read()
+
+              {:error, reason} ->
+                Repo.rollback(reason)
+            end
+
+          existing ->
+            replay(existing, request, &Wastage.read/1)
+        end
+      end)
+    end
+  end
+
+  def record_wastage(%Scope{}, _company_id, _execution_id, _attrs),
+    do: {:error, :invalid_wastage}
+
+  @doc """
+  Corrects a wastage record with a new record that names it; the original is
+  never changed and a record is corrected at most once. Needs the
+  `factory.production-execution.wastage.correct` capability on the order.
+  Attributes: company-unique `request_id`, nonblank `correction_reason`, the
+  corrected `quantity` (zero voids the record), and optionally a different
+  active `reason_id` or `note`. A changed quantity posts an Inventory
+  correction of the wastage's consumption for the difference.
+  """
+  def correct_wastage(%Scope{} = scope, company_id, wastage_id, attrs) when is_map(attrs) do
+    with {:ok, _company} <- company(scope, company_id),
+         {:ok, record} <- Wastage.get(company_id, wastage_id),
+         {:ok, recorder} <- Capture.recorder(scope, company_id),
+         :ok <- Capture.authorize(scope, company_id, record.order_id, @wastage_correct),
+         {:ok, execution} <- get_execution(scope, company_id, record.execution_id),
+         {:ok, order} <- get_order(scope, company_id, record.order_id),
+         {:ok, request} <- Wastage.validate_correction(company_id, record, attrs) do
+      Repo.transaction(fn ->
+        lock_order!(company_id, order.id)
+
+        case Wastage.by_request(company_id, request.request_id) do
+          nil ->
+            if Wastage.corrected?(record), do: Repo.rollback(:wastage_already_corrected)
+
+            transaction_id =
+              post_wastage_correction(
+                scope,
+                company_id,
+                execution,
+                order,
+                record,
+                recorder,
+                request
+              )
+
+            request
+            |> Map.merge(recorder)
+            |> Map.merge(%{company_id: company_id, inventory_transaction_id: transaction_id})
+            |> Wastage.insert!()
+            |> Wastage.read()
+
+          existing ->
+            replay(existing, request, &Wastage.read/1)
+        end
+      end)
+    end
+  end
+
+  def correct_wastage(%Scope{}, _company_id, _wastage_id, _attrs),
+    do: {:error, :invalid_wastage}
+
+  @doc "Lists a run's wastage records in ID order; `corrected_by_id` names a record's correction, and records without one are current."
+  def list_wastage(%Scope{} = scope, company_id, execution_id) do
+    with {:ok, execution} <- get_execution(scope, company_id, execution_id),
+         do: {:ok, Wastage.list(company_id, execution.id)}
+  end
+
+  defp post_wastage_correction(scope, company_id, execution, order, record, recorder, request) do
+    if Decimal.eq?(request.delta, 0) do
+      nil
+    else
+      posting = %{
+        request_id: "pe:wastage:" <> request.request_id,
+        actor_type: recorder.recorded_by_type,
+        actor_id: recorder.recorded_by_id,
+        evidence: Wastage.evidence(request.reason, request.note),
+        reason: request.correction_reason,
+        corrects_transaction_id: Wastage.root(record).inventory_transaction_id,
+        context: run_context(execution, order),
+        # More scrap draws more stock; less returns the difference.
+        lines: [wastage_line(request, Decimal.negate(request.delta))]
+      }
+
+      case Inventory.record_production_correction(scope, company_id, posting, __MODULE__) do
+        {:ok, transaction} -> transaction.id
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end
+  end
+
+  defp wastage_line(request, quantity) do
+    %{
+      item_id: request.item_id,
+      location_id: request.location_id,
+      identity_id: request.identity_id,
+      quantity: quantity,
+      observation: request.observation
+    }
+    |> Map.reject(fn {_key, value} -> is_nil(value) end)
+  end
+
+  defp replay(existing, request, read) do
+    if existing.request_fingerprint == request.request_fingerprint,
+      do: read.(existing),
+      else: Repo.rollback(:request_id_conflict)
+  end
+
+  defp run_context(run, order) do
+    %{
+      operation_execution: run.request_id,
+      order_or_batch: order.code,
+      work_centre: Integer.to_string(run.resource_id)
+    }
+  end
+
+  defp lock_order!(company_id, order_id) do
+    Repo.one!(
+      from(o in Order,
+        where: o.id == ^order_id and o.company_id == ^company_id,
+        lock: "FOR UPDATE"
+      )
+    )
   end
 
   defp selected_revisions(scope, company_id, order),

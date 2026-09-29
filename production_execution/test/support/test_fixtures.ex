@@ -24,6 +24,8 @@ defmodule Bilimbi.Factory.ProductionExecution.TestFixtures do
         ],
         do: SQL.query!(Repo, sql, [])
 
+    create_wastage_tables!()
+
     SQL.query!(
       Repo,
       "CREATE FUNCTION pg_temp.refuse_hold_override_change() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'material hold overrides are immutable'; END $$",
@@ -43,6 +45,151 @@ defmodule Bilimbi.Factory.ProductionExecution.TestFixtures do
     )
 
     :ok
+  end
+
+  defp create_wastage_tables! do
+    for sql <- [
+          "CREATE TEMPORARY TABLE factory_wastage_reasons (id bigserial PRIMARY KEY, company_id bigint NOT NULL REFERENCES companies(id), code varchar(64) NOT NULL, label text NOT NULL, active boolean NOT NULL DEFAULT true, inserted_at timestamp(0) NOT NULL, updated_at timestamp(0) NOT NULL, CONSTRAINT factory_wastage_reasons_company_id_code_unique UNIQUE (company_id, code), CONSTRAINT factory_wastage_reasons_id_company_id_unique UNIQUE (id, company_id)) ON COMMIT PRESERVE ROWS",
+          "CREATE TEMPORARY TABLE factory_wastage_records (id bigserial PRIMARY KEY, company_id bigint NOT NULL REFERENCES companies(id), request_id text NOT NULL, request_fingerprint text NOT NULL, order_id bigint NOT NULL REFERENCES factory_production_orders(id), execution_id bigint NOT NULL REFERENCES factory_operation_executions(id), reason_id bigint NOT NULL, item_id bigint NOT NULL REFERENCES commerce_inventory_items(id), location_id bigint NOT NULL REFERENCES factory_inventory_locations(id), identity_id bigint REFERENCES factory_inventory_identities(id), quantity numeric(24, 12) NOT NULL, unit_id bigint NOT NULL REFERENCES factory_inventory_units(id), observation text NOT NULL, note text, occurred_at timestamp(6) NOT NULL, recorded_by_type text NOT NULL, recorded_by_id bigint NOT NULL, recorded_by_acting_for_user_id bigint, inventory_transaction_id bigint REFERENCES factory_inventory_transactions(id), corrects_id bigint UNIQUE REFERENCES factory_wastage_records(id), correction_reason text, inserted_at timestamp(0) NOT NULL, UNIQUE(company_id, request_id), CONSTRAINT factory_wastage_records_reason_id_fkey FOREIGN KEY (reason_id, company_id) REFERENCES factory_wastage_reasons (id, company_id), CONSTRAINT factory_wastage_records_correction CHECK ((corrects_id IS NULL AND quantity > 0 AND inventory_transaction_id IS NOT NULL AND correction_reason IS NULL) OR (corrects_id IS NOT NULL AND quantity >= 0 AND length(btrim(correction_reason)) > 0))) ON COMMIT PRESERVE ROWS",
+          "CREATE FUNCTION pg_temp.refuse_wastage_change() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'wastage records are immutable; record a correction'; END $$",
+          "CREATE TRIGGER wastage_records_append_only BEFORE UPDATE OR DELETE ON factory_wastage_records FOR EACH ROW EXECUTE FUNCTION pg_temp.refuse_wastage_change()",
+          "CREATE TRIGGER wastage_records_no_truncate BEFORE TRUNCATE ON factory_wastage_records FOR EACH STATEMENT EXECUTE FUNCTION pg_temp.refuse_wastage_change()"
+        ],
+        do: SQL.query!(Repo, sql, [])
+  end
+
+  @doc """
+  A completed slitting run for shop-floor capture tests, over `mill!/0`'s
+  context: 120 kg of coil received as one lot, then 100 kg of it slit into an
+  80 kg sheet unit and a 15 kg trim lot with a 5 kg variance. The resource
+  type, codes, and quantities are fixture data.
+  """
+  def capture_run!(context) do
+    alias Bilimbi.Factory.{Inventory, ProductDefinition, ProductionExecution}
+
+    %{scope: scope, coil: coil, sheet: sheet, trim: trim, kg: kg} = context
+    %{receiving: receiving, slitter: slitter, yard: yard} = context
+
+    {:ok, product} =
+      ProductDefinition.create_product(scope, 73, sheet.id, %{code: "SHEET", name: "Sheet"})
+
+    {:ok, resource_type} =
+      ProductDefinition.create_resource_type(scope, 73, %{code: "TYPE_A", name: "Type A"})
+
+    {:ok, resource} =
+      ProductDefinition.create_resource(scope, 73, %{
+        code: "RESOURCE_A",
+        name: "Resource A",
+        resource_type_id: resource_type.id
+      })
+
+    {:ok, formula} =
+      ProductDefinition.publish_formula(scope, 73, product.id, %{
+        lines: [
+          %{item_id: coil.id, unit_id: kg.id, role: "input", quantity: 100},
+          %{item_id: sheet.id, unit_id: kg.id, role: "output", quantity: 80},
+          %{item_id: trim.id, unit_id: kg.id, role: "output", quantity: 15}
+        ]
+      })
+
+    {:ok, routing} =
+      ProductDefinition.publish_routing(scope, 73, product.id, %{
+        operations: [
+          %{
+            code: "SLIT",
+            sequence: 1,
+            inputs: [coil.id],
+            outputs: [sheet.id, trim.id],
+            allowed_resource_ids: [resource.id]
+          }
+        ]
+      })
+
+    {:ok, order} =
+      ProductionExecution.create_order(scope, 73, %{
+        code: "ORDER-1",
+        kind: "order",
+        product_id: product.id,
+        formula_version: formula.version,
+        routing_version: routing.version
+      })
+
+    {:ok, receipt} =
+      Inventory.record_receipt(scope, 73, %{
+        request_id: "RECEIPT-1",
+        actor_type: "user",
+        actor_id: 9,
+        evidence: "Delivery note",
+        lines: [
+          %{
+            item_id: coil.id,
+            location_id: receiving.id,
+            quantity: 120,
+            observation: "measured",
+            identity: %{kind: "lot", code: "COIL-LOT-1"}
+          }
+        ]
+      })
+
+    coil_lot = Enum.find_value(receipt.entries, &(&1.role == :stock && &1.identity_id))
+    completed_at = DateTime.add(DateTime.utc_now(), -3600, :second)
+
+    {:ok, run} =
+      ProductionExecution.complete_operation(scope, 73, order.id, :live, %{
+        request_id: "RUN-1",
+        operation_code: "SLIT",
+        resource_id: resource.id,
+        operator_type: "user",
+        operator_id: 9,
+        evidence: "Run sheet",
+        started_at: DateTime.add(completed_at, -1800, :second),
+        completed_at: completed_at,
+        inputs: [
+          %{
+            item_id: coil.id,
+            location_id: receiving.id,
+            quantity: 100,
+            observation: "measured",
+            identity_id: coil_lot
+          }
+        ],
+        outputs: [
+          %{
+            item_id: sheet.id,
+            location_id: slitter.id,
+            quantity: 80,
+            observation: "measured",
+            identity: %{kind: "unit", code: "SHEET-UNIT-1"}
+          },
+          %{
+            item_id: trim.id,
+            location_id: yard.id,
+            quantity: 15,
+            observation: "measured",
+            output_role: "trim",
+            identity: %{kind: "lot", code: "TRIM-LOT-1"}
+          }
+        ],
+        variance: %{evidence: "Run sheet", reconciliation_basis: "Unweighed loss"}
+      })
+
+    {:ok, transaction} = Inventory.get_transaction(scope, 73, run.inventory_transaction_id)
+
+    identity = fn item ->
+      Enum.find_value(
+        transaction.entries,
+        &((&1.role == :stock and &1.item_id == item.id) && &1.identity_id)
+      )
+    end
+
+    Map.merge(context, %{
+      order: order,
+      resource: resource,
+      run: run,
+      coil_lot: coil_lot,
+      sheet_unit: identity.(sheet),
+      trim_lot: identity.(trim)
+    })
   end
 
   def install_authz!(principal_declarations \\ []) do
