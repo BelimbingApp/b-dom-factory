@@ -230,7 +230,8 @@ see the run's yield. The order and each run also show a labour panel: pick
 a role and clock in or out, see totals per run, and, for a supervisor, clock
 in someone else, add a finished entry, or correct one.
 Entered times are read in the company time zone the page displays (UTC for
-a reader who displays UTC). Recording and correcting controls
+a reader who displays UTC); a labour correction's time left as shown keeps
+the entry's exact recorded time. Recording and correcting controls
 appear only with their capabilities, and the facade refuses a forged event
 regardless. Orders and runs are read with `list_orders/3` and
 `list_executions/3`.
