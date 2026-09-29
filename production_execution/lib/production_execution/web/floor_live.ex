@@ -24,6 +24,9 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
   @correct_measurement "factory.production-execution.measurement.correct"
 
   @touch "min-h-14 px-6 text-base"
+  # `<.input class=...>` replaces the input's own styling, so floor forms
+  # enlarge their fields from the form instead.
+  @fields "[&_input]:min-h-14 [&_select]:min-h-14 [&_input]:text-lg [&_select]:text-lg"
 
   @impl true
   def mount(_params, _session, socket) do
@@ -32,6 +35,7 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
       |> assign(:page_title, "Shop floor")
       |> assign(:active_nav, "production.factory.floor")
       |> assign(:touch, @touch)
+      |> assign(:fields, @fields)
       |> assign(:error, nil)
       |> assign(:order, nil)
       |> assign(:runs, [])
@@ -797,7 +801,7 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
       <.page variant={:list}>
         <.header>
           Shop floor
-          <:subtitle>Record what happened on a run: scrapped material and who worked on it.</:subtitle>
+          <:subtitle>Record what happened on a run: scrapped material, who worked on it, and what its output measured.</:subtitle>
         </.header>
 
         <p :if={@error} id="floor-error" role="alert" class="mt-4 text-base text-danger-ink">{@error}</p>
@@ -846,14 +850,14 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
           </.card>
 
           <.card :if={@can_record_wastage?} id="floor-wastage-entry" title="Record wastage">
-            <.form for={@wastage_form} id="wastage-form" phx-change="change_wastage" phx-submit="save_wastage" class="space-y-4 p-4">
+            <.form for={@wastage_form} id="wastage-form" phx-change="change_wastage" phx-submit="save_wastage" class={["space-y-4 p-4", @fields]}>
               <input type="hidden" name="wastage[request_id]" value={@wastage_form.params["request_id"]} />
               <input type="hidden" name="wastage[reason_id]" value={@wastage_form.params["reason_id"]} />
-              <.input field={@wastage_form[:line]} type="select" label="Material" prompt="Choose material" options={for line <- @lines, do: {"#{line.side}: #{line.label} (#{quantity(line.quantity)} #{line.unit})", line.key}} class="min-h-14 text-base" />
-              <.input field={@wastage_form[:location_id]} type="select" label="Drawn from" prompt="The run's location" options={for location <- @locations, do: {"#{location.code} · #{location.name}", location.id}} class="min-h-14 text-base" />
+              <.input field={@wastage_form[:line]} type="select" label="Material" prompt="Choose material" options={for line <- @lines, do: {"#{line.side}: #{line.label} (#{quantity(line.quantity)} #{line.unit})", line.key}} />
+              <.input field={@wastage_form[:location_id]} type="select" label="Drawn from" prompt="The run's location" options={for location <- @locations, do: {"#{location.code} · #{location.name}", location.id}} />
               <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <.input field={@wastage_form[:quantity]} label="Quantity (native unit)" inputmode="decimal" autocomplete="off" class="min-h-14 text-xl" />
-                <.input field={@wastage_form[:observation]} type="select" label="Quantity was" options={Inventory.observations()} class="min-h-14 text-base" />
+                <.input field={@wastage_form[:quantity]} label="Quantity (native unit)" inputmode="decimal" autocomplete="off" />
+                <.input field={@wastage_form[:observation]} type="select" label="Quantity was" options={Inventory.observations()} />
               </div>
               <fieldset>
                 <legend class="mb-2 text-sm font-semibold">Reason</legend>
@@ -885,10 +889,10 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
           </.card>
 
           <.card :if={@correcting} id="wastage-correction" title="Correct wastage">
-            <.form for={@correction_form} id="wastage-correction-form" phx-submit="save_wastage_correction" class="space-y-4 p-4">
+            <.form for={@correction_form} id="wastage-correction-form" phx-submit="save_wastage_correction" class={["space-y-4 p-4", @fields]}>
               <input type="hidden" name="correction[request_id]" value={@correction_form.params["request_id"]} />
-              <.input field={@correction_form[:quantity]} label="Corrected quantity (0 voids it)" inputmode="decimal" class="min-h-14 text-xl" />
-              <.input field={@correction_form[:reason_id]} type="select" label="Reason" options={for reason <- @reasons, reason.active or reason.id == @correcting.reason_id, do: {reason.label, reason.id}} class="min-h-14 text-base" />
+              <.input field={@correction_form[:quantity]} label="Corrected quantity (0 voids it)" inputmode="decimal" />
+              <.input field={@correction_form[:reason_id]} type="select" label="Reason" options={for reason <- @reasons, reason.active or reason.id == @correcting.reason_id, do: {reason.label, reason.id}} />
               <.input field={@correction_form[:note]} label="Note" />
               <.input field={@correction_form[:correction_reason]} label="Why is this corrected?" />
               <div class="flex gap-3">
@@ -912,7 +916,7 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
     ~H"""
     <div class="space-y-5">
       <.card :if={@can_record_measurement?} id="floor-measurement-entry" title="Measure output">
-        <.form for={@measurement_form} id="measurement-form" phx-change="change_measurement" phx-submit="save_measurement" class="space-y-4 p-4">
+        <.form for={@measurement_form} id="measurement-form" phx-change="change_measurement" phx-submit="save_measurement" class={["space-y-4 p-4", @fields]}>
           <input type="hidden" name="measurement[request_id]" value={@measurement_form.params["request_id"]} />
           <input type="hidden" name="measurement[measurement_type_id]" value={@measurement_form.params["measurement_type_id"]} />
           <fieldset>
@@ -924,14 +928,14 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
             </div>
             <p :if={Enum.all?(@measurement_types, &(not &1.active))} class="text-sm text-ink-muted">No active measurement types. An administrator defines them under Measurement types.</p>
           </fieldset>
-          <.input field={@measurement_form[:identity_id]} type="select" label="Output" prompt="Run output as a whole" options={for line <- outputs(@lines), do: {line.label, line.identity_id}} class="min-h-14 text-base" />
+          <.input field={@measurement_form[:identity_id]} type="select" label="Output" prompt="Run output as a whole" options={for line <- outputs(@lines), do: {line.label, line.identity_id}} />
           <%= case find_type(@measurement_types, @measurement_form.params["measurement_type_id"]) do %>
             <% %{value_type: "boolean"} = type -> %>
-              <.input field={@measurement_form[:value]} type="select" label={type.label} prompt="Choose" options={[{"Yes", "true"}, {"No", "false"}]} class="min-h-14 text-base" />
+              <.input field={@measurement_form[:value]} type="select" label={type.label} prompt="Choose" options={[{"Yes", "true"}, {"No", "false"}]} />
             <% %{value_type: value_type} = type when value_type in ["integer", "decimal"] -> %>
-              <.input field={@measurement_form[:value]} label={"#{type.label}#{if type.unit, do: " (#{type.unit})"}"} inputmode={if value_type == "integer", do: "numeric", else: "decimal"} autocomplete="off" hint={limits(type)} class="min-h-14 text-xl" />
+              <.input field={@measurement_form[:value]} label={"#{type.label}#{if type.unit, do: " (#{type.unit})"}"} inputmode={if value_type == "integer", do: "numeric", else: "decimal"} autocomplete="off" hint={limits(type)} />
             <% %{} = type -> %>
-              <.input field={@measurement_form[:value]} label={type.label} class="min-h-14 text-base" />
+              <.input field={@measurement_form[:value]} label={type.label} />
             <% nil -> %>
               <p class="text-sm text-ink-muted">Choose what was measured to enter its value.</p>
           <% end %>
@@ -960,9 +964,9 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
       </.card>
 
       <.card :if={@measurement_correcting} id="measurement-correction" title="Correct measurement">
-        <.form for={@measurement_correction_form} id="measurement-correction-form" phx-submit="save_measurement_correction" class="space-y-4 p-4">
+        <.form for={@measurement_correction_form} id="measurement-correction-form" phx-submit="save_measurement_correction" class={["space-y-4 p-4", @fields]}>
           <input type="hidden" name="measurement_correction[request_id]" value={@measurement_correction_form.params["request_id"]} />
-          <.input field={@measurement_correction_form[:value]} label="Corrected value" class="min-h-14 text-xl" />
+          <.input field={@measurement_correction_form[:value]} label="Corrected value" />
           <.input field={@measurement_correction_form[:note]} label="Note" />
           <.input field={@measurement_correction_form[:correction_reason]} label="Why is this corrected?" />
           <div class="flex gap-3">
@@ -981,10 +985,10 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
     ~H"""
     <div class="space-y-5">
       <.card :if={@can_record_labour? or @can_manage_labour?} id="floor-clock" title={if @run, do: "Clock in on this run", else: "Clock in on #{@order.code}"}>
-        <.form for={@labour_form} id="labour-form" phx-change="change_labour" phx-submit="clock_in" class="space-y-4 p-4">
+        <.form for={@labour_form} id="labour-form" phx-change="change_labour" phx-submit="clock_in" class={["space-y-4 p-4", @fields]}>
           <input type="hidden" name="labour[request_id]" value={@labour_form.params["request_id"]} />
           <input type="hidden" name="labour[role_id]" value={@labour_form.params["role_id"]} />
-          <.input :if={@can_manage_labour?} field={@labour_form[:worker_user_id]} type="select" label="Worker" prompt="Me" options={for user <- @users, user.id != @user_id, do: {user.name, user.id}} class="min-h-14 text-base" />
+          <.input :if={@can_manage_labour?} field={@labour_form[:worker_user_id]} type="select" label="Worker" prompt="Me" options={for user <- @users, user.id != @user_id, do: {user.name, user.id}} />
           <fieldset>
             <legend class="mb-2 text-sm font-semibold">Role</legend>
             <div class="grid grid-cols-2 gap-3 sm:grid-cols-3">
@@ -1028,12 +1032,12 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
       </.card>
 
       <.card :if={@labour_correcting} id="labour-correction" title="Correct labour">
-        <.form for={@labour_correction_form} id="labour-correction-form" phx-submit="save_labour_correction" class="space-y-4 p-4">
+        <.form for={@labour_correction_form} id="labour-correction-form" phx-submit="save_labour_correction" class={["space-y-4 p-4", @fields]}>
           <input type="hidden" name="labour_correction[request_id]" value={@labour_correction_form.params["request_id"]} />
-          <.input field={@labour_correction_form[:role_id]} type="select" label="Role" options={for role <- @roles, role.active or role.id == @labour_correcting.role_id, do: {role.label, role.id}} class="min-h-14 text-base" />
+          <.input field={@labour_correction_form[:role_id]} type="select" label="Role" options={for role <- @roles, role.active or role.id == @labour_correcting.role_id, do: {role.label, role.id}} />
           <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <.input field={@labour_correction_form[:started_at]} type="datetime-local" label={"Start (#{zone_name()})"} class="min-h-14 text-base" />
-            <.input field={@labour_correction_form[:stopped_at]} type="datetime-local" label={"Stop (#{zone_name()}); empty keeps it open"} class="min-h-14 text-base" />
+            <.input field={@labour_correction_form[:started_at]} type="datetime-local" label={"Start (#{zone_name()})"} />
+            <.input field={@labour_correction_form[:stopped_at]} type="datetime-local" label={"Stop (#{zone_name()}); empty keeps it open"} />
           </div>
           <.input field={@labour_correction_form[:correction_reason]} label="Why is this corrected?" />
           <div class="flex gap-3">
@@ -1044,13 +1048,13 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
       </.card>
 
       <.card :if={@can_manage_labour?} id="labour-entry" title="Add a finished entry">
-        <.form for={@labour_entry_form} id="labour-entry-form" phx-submit="save_labour_entry" class="space-y-4 p-4">
+        <.form for={@labour_entry_form} id="labour-entry-form" phx-submit="save_labour_entry" class={["space-y-4 p-4", @fields]}>
           <input type="hidden" name="entry[request_id]" value={@labour_entry_form.params["request_id"]} />
           <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <.input field={@labour_entry_form[:worker_user_id]} type="select" label="Worker" prompt="Choose a worker" options={for user <- @users, do: {user.name, user.id}} class="min-h-14 text-base" />
-            <.input field={@labour_entry_form[:role_id]} type="select" label="Role" prompt="Choose a role" options={for role <- @roles, role.active, do: {role.label, role.id}} class="min-h-14 text-base" />
-            <.input field={@labour_entry_form[:started_at]} type="datetime-local" label={"Start (#{zone_name()})"} class="min-h-14 text-base" />
-            <.input field={@labour_entry_form[:stopped_at]} type="datetime-local" label={"Stop (#{zone_name()})"} class="min-h-14 text-base" />
+            <.input field={@labour_entry_form[:worker_user_id]} type="select" label="Worker" prompt="Choose a worker" options={for user <- @users, do: {user.name, user.id}} />
+            <.input field={@labour_entry_form[:role_id]} type="select" label="Role" prompt="Choose a role" options={for role <- @roles, role.active, do: {role.label, role.id}} />
+            <.input field={@labour_entry_form[:started_at]} type="datetime-local" label={"Start (#{zone_name()})"} />
+            <.input field={@labour_entry_form[:stopped_at]} type="datetime-local" label={"Stop (#{zone_name()})"} />
           </div>
           <.input field={@labour_entry_form[:note]} label="Note (optional)" />
           <.button type="submit" class={@touch}>Add entry</.button>

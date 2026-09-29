@@ -61,6 +61,10 @@
   through `lib/production_execution/capture_codes.ex` and administered with
   `Web.CodeList`; do not hard-code the entries or build another admin screen
   for one.
+- To enlarge form fields on a touch page, size them from the form
+  (`[&_input]:min-h-14`) as `lib/production_execution/web/floor_live.ex`
+  does; Base UI's `<.input class=...>` replaces the input's own classes and
+  drops its border.
 - Inventory production postings must be called lexically in the facade
   module: the compiled-graph boundary test accepts only the declared
   authority module, so a helper module that posts fails CI.
