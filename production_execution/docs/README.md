@@ -167,11 +167,38 @@ equals product, trim, waste, and variance. Each balance also carries
 `wastage_transaction_ids`. Positions from `Inventory.get_identity_positions/3`
 agree.
 
+### Labour
+
+Labour roles are the company's configuration, managed at
+`/factory/labour-roles` or through `create_labour_role/3`,
+`update_labour_role/4`, `get_labour_role/3`, and `list_labour_roles/3`, the
+same shape as wastage reasons.
+
+A labour entry is time a company user (Core User, in the order's company)
+works on an order, optionally on one of its runs (`execution_id`), in an
+active role. `clock_in/4` opens one now; `clock_out/3` closes it now, the one
+update an entry allows, recording who stopped it; `record_labour/4` records a
+finished entry with past `started_at` and `stopped_at`. Recording one's own
+time needs `factory.production-execution.labour.record`; anyone else's, and
+every correction, needs `factory.production-execution.labour.manage`. A
+worker has at most one open entry (`:worker_already_clocked_in`) and a
+worker's current entries never overlap (`:labour_overlap`; an open entry
+runs to now). `correct_labour/4` replaces an entry with a new one naming it,
+keeping its worker and order and changing any of its times, role, run, or
+note; a corrected entry can no longer be clocked out. `list_labour/3` lists
+an order's entries with each closed entry's `seconds`, and
+`labour_summary/3` totals the current ones per run and per worker, with those
+still open.
+
 ### Shop-floor page
 
 `/factory/floor` (`factory.production-execution.floor.view`) is the
 tablet page: pick an order, then one of its runs, then record wastage with
-large controls and see the run's yield. Recording and correcting controls
+large controls and see the run's yield. The order and each run also show a
+labour panel: pick a role and clock in or out, see totals per run, and, for a
+supervisor, clock in someone else, add a finished entry, or correct one.
+Entered times are read in the company time zone the page displays (UTC for
+a reader who displays UTC). Recording and correcting controls
 appear only with their capabilities, and the facade refuses a forged event
 regardless. Orders and runs are read with `list_orders/3` and
 `list_executions/3`.

@@ -1,7 +1,8 @@
 defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
   @moduledoc """
   The tablet shop-floor page: pick an order, then one of its runs, then
-  record against that run with large controls. Every write goes through the
+  record against that run with large controls: scrapped material and who
+  worked on it. Every write goes through the
   Production Execution facade, which checks the capability on the run's
   order and records the signed-in user as the recorder; the flags here only
   decide which controls to show.
@@ -9,12 +10,16 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
   use Bilimbi.Base.UI, :live_view
 
   alias Bilimbi.Base.Authz
+  alias Bilimbi.Base.UI.DateTimeDisplay
+  alias Bilimbi.Core.User
   alias Bilimbi.Factory.Inventory
   alias Bilimbi.Factory.ProductionExecution
   alias Bilimbi.Factory.ProductionExecution.Web.CodeList
 
   @record_wastage "factory.production-execution.wastage.record"
   @correct_wastage "factory.production-execution.wastage.correct"
+  @record_labour "factory.production-execution.labour.record"
+  @manage_labour "factory.production-execution.labour.manage"
 
   @touch "min-h-14 px-6 text-base"
 
@@ -31,6 +36,12 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
       |> assign(:run, nil)
       |> assign(:can_record_wastage?, can?(socket, @record_wastage))
       |> assign(:can_correct_wastage?, can?(socket, @correct_wastage))
+      |> assign(:can_record_labour?, can?(socket, @record_labour))
+      |> assign(:can_manage_labour?, can?(socket, @manage_labour))
+      |> assign(:user_id, socket.assigns.current_scope.user["user_id"])
+      |> assign(:labour_correcting, nil)
+      |> assign(:labour_form, labour_form(%{}))
+      |> assign(:labour_entry_form, labour_entry_form(%{}))
 
     socket =
       case ProductionExecution.list_orders(scope(socket), company_id(socket)) do
@@ -153,10 +164,156 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
     end
   end
 
+  def handle_event("pick_role", %{"id" => id}, socket),
+    do: {:noreply, update_form(socket, :labour_form, %{"role_id" => id})}
+
+  def handle_event("change_labour", %{"labour" => params}, socket),
+    do: {:noreply, update_form(socket, :labour_form, params)}
+
+  def handle_event("clock_in", _params, socket) do
+    if can_clock?(socket) do
+      params = socket.assigns.labour_form.params
+
+      attrs = %{
+        request_id: params["request_id"],
+        role_id: integer(params["role_id"]),
+        worker_user_id: integer(params["worker_user_id"]) || socket.assigns.user_id,
+        execution_id: socket.assigns.run && socket.assigns.run.id
+      }
+
+      if is_nil(attrs.role_id),
+        do: {:noreply, assign(socket, :error, "Choose a labour role.")},
+        else:
+          result(
+            socket,
+            ProductionExecution.clock_in(
+              scope(socket),
+              company_id(socket),
+              order_id(socket),
+              attrs
+            ),
+            "Clocked in."
+          )
+    else
+      {:noreply, assign(socket, :error, "You do not have permission to record labour.")}
+    end
+  end
+
+  def handle_event("clock_out", %{"id" => id}, socket) do
+    if can_clock?(socket) do
+      result(
+        socket,
+        ProductionExecution.clock_out(scope(socket), company_id(socket), integer(id)),
+        "Clocked out."
+      )
+    else
+      {:noreply, assign(socket, :error, "You do not have permission to record labour.")}
+    end
+  end
+
+  def handle_event("save_labour_entry", %{"entry" => params}, socket) do
+    if socket.assigns.can_manage_labour? do
+      with {:ok, started_at} <- local_time(params["started_at"]),
+           {:ok, stopped_at} <- local_time(params["stopped_at"]) do
+        attrs = %{
+          request_id: params["request_id"],
+          role_id: integer(params["role_id"]),
+          worker_user_id: integer(params["worker_user_id"]),
+          execution_id: socket.assigns.run && socket.assigns.run.id,
+          started_at: started_at,
+          stopped_at: stopped_at,
+          note: params["note"]
+        }
+
+        result(
+          socket,
+          ProductionExecution.record_labour(
+            scope(socket),
+            company_id(socket),
+            order_id(socket),
+            attrs
+          ),
+          "Labour recorded."
+        )
+      else
+        :error -> {:noreply, assign(socket, :error, "Enter a start and stop time.")}
+      end
+    else
+      {:noreply, assign(socket, :error, "You do not have permission to manage labour.")}
+    end
+  end
+
+  def handle_event("start_labour_correction", %{"id" => id}, socket) do
+    case Enum.find(socket.assigns.labour, &(Integer.to_string(&1.id) == id)) do
+      nil ->
+        {:noreply, assign(socket, :error, "Labour entry not found.")}
+
+      entry ->
+        {:noreply,
+         socket
+         |> assign(:labour_correcting, entry)
+         |> assign(
+           :labour_correction_form,
+           to_form(
+             %{
+               "request_id" => request_id(),
+               "role_id" => Integer.to_string(entry.role_id),
+               "started_at" => local_input(entry.started_at),
+               "stopped_at" => local_input(entry.stopped_at),
+               "correction_reason" => ""
+             },
+             as: :labour_correction
+           )
+         )}
+    end
+  end
+
+  def handle_event("cancel_labour_correction", _params, socket),
+    do: {:noreply, assign(socket, :labour_correcting, nil)}
+
+  def handle_event("save_labour_correction", %{"labour_correction" => params}, socket) do
+    if socket.assigns.can_manage_labour? do
+      stopped_at =
+        if params["stopped_at"] in [nil, ""],
+          do: {:ok, nil},
+          else: local_time(params["stopped_at"])
+
+      with {:ok, started_at} <- local_time(params["started_at"]),
+           {:ok, stopped_at} <- stopped_at do
+        attrs = %{
+          request_id: params["request_id"],
+          role_id: integer(params["role_id"]),
+          started_at: started_at,
+          stopped_at: stopped_at,
+          correction_reason: params["correction_reason"]
+        }
+
+        result(
+          socket,
+          ProductionExecution.correct_labour(
+            scope(socket),
+            company_id(socket),
+            socket.assigns.labour_correcting.id,
+            attrs
+          ),
+          "Labour corrected."
+        )
+      else
+        :error -> {:noreply, assign(socket, :error, "Enter a valid start and stop time.")}
+      end
+    else
+      {:noreply, assign(socket, :error, "You do not have permission to manage labour.")}
+    end
+  end
+
   defp result(socket, {:ok, _record}, message) do
     {:noreply,
      socket
      |> assign(:correcting, nil)
+     |> assign(:labour_correcting, nil)
+     |> assign(:labour_form, labour_form(%{}))
+     |> assign(:labour_entry_form, labour_entry_form(%{}))
+     |> load_order()
      |> load_run()
      |> put_flash(:success, message)}
   end
@@ -175,10 +332,40 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
            ProductionExecution.get_order(scope(socket), company_id(socket), order_id),
          {:ok, runs} <-
            ProductionExecution.list_executions(scope(socket), company_id(socket), order.id) do
-      assign(socket, order: order, runs: runs)
+      socket
+      |> assign(order: order, runs: runs, labour_correcting: nil)
+      |> assign(:labour_form, labour_form(%{}))
+      |> assign(:labour_entry_form, labour_entry_form(%{}))
+      |> load_order()
     else
       {:error, reason} ->
         assign(socket, order: nil, runs: [], error: CodeList.error_text(reason))
+    end
+  end
+
+  # What the order's labour panel reads: its roles, entries, and totals, and
+  # for a supervisor the company's users to record for.
+  defp load_order(%{assigns: %{order: nil}} = socket), do: socket
+
+  defp load_order(socket) do
+    scope = scope(socket)
+    company_id = company_id(socket)
+    order_id = order_id(socket)
+
+    users =
+      with true <- socket.assigns.can_manage_labour?,
+           {:ok, users} <- User.list_company_users(scope, company_id) do
+        users
+      else
+        _ -> []
+      end
+
+    with {:ok, roles} <- ProductionExecution.list_labour_roles(scope, company_id),
+         {:ok, labour} <- ProductionExecution.list_labour(scope, company_id, order_id),
+         {:ok, summary} <- ProductionExecution.labour_summary(scope, company_id, order_id) do
+      assign(socket, roles: roles, labour: labour, labour_summary: summary, users: users)
+    else
+      {:error, reason} -> assign(socket, :error, CodeList.error_text(reason))
     end
   end
 
@@ -305,6 +492,108 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
     do: "floor:" <> Base.url_encode64(:crypto.strong_rand_bytes(18), padding: false)
 
   defp run_id(socket), do: socket.assigns.run.id
+  defp order_id(socket), do: socket.assigns.order.id
+
+  defp can_clock?(socket),
+    do: socket.assigns.can_record_labour? or socket.assigns.can_manage_labour?
+
+  defp labour_form(params) do
+    to_form(
+      Map.merge(%{"request_id" => request_id(), "role_id" => "", "worker_user_id" => ""}, params),
+      as: :labour
+    )
+  end
+
+  defp labour_entry_form(params) do
+    to_form(
+      Map.merge(
+        %{
+          "request_id" => request_id(),
+          "worker_user_id" => "",
+          "role_id" => "",
+          "started_at" => "",
+          "stopped_at" => "",
+          "note" => ""
+        },
+        params
+      ),
+      as: :entry
+    )
+  end
+
+  # Entered times are read in the zone the reader's timestamps display in:
+  # the company's, or UTC for a reader who displays UTC.
+  defp zone do
+    case DateTimeDisplay.get() do
+      %{mode: :utc} -> {"Etc/UTC", Calendar.get_time_zone_database()}
+      %{timezone: zone, tz_db: db} when is_binary(zone) and not is_nil(db) -> {zone, db}
+      _ -> {"Etc/UTC", Calendar.get_time_zone_database()}
+    end
+  end
+
+  defp zone_name, do: elem(zone(), 0)
+
+  defp local_time(value) when is_binary(value) do
+    {zone, db} = zone()
+
+    with {:ok, naive} <- NaiveDateTime.from_iso8601(seconds(value)),
+         {:ok, local} <- from_naive(naive, zone, db),
+         {:ok, utc} <- DateTime.shift_zone(local, "Etc/UTC", db) do
+      {:ok, utc}
+    else
+      _ -> :error
+    end
+  end
+
+  defp local_time(_value), do: :error
+
+  defp from_naive(naive, zone, db) do
+    case DateTime.from_naive(naive, zone, db) do
+      {:ok, local} -> {:ok, local}
+      {:ambiguous, first, _second} -> {:ok, first}
+      _gap_or_error -> :error
+    end
+  end
+
+  defp seconds(<<_date::binary-size(10), "T", _time::binary-size(5)>> = value), do: value <> ":00"
+  defp seconds(value), do: value
+
+  defp local_input(nil), do: ""
+
+  defp local_input(%DateTime{} = at) do
+    {zone, db} = zone()
+
+    case DateTime.shift_zone(at, zone, db) do
+      {:ok, local} ->
+        local |> DateTime.to_naive() |> NaiveDateTime.to_iso8601() |> binary_part(0, 16)
+
+      _ ->
+        ""
+    end
+  end
+
+  defp duration(nil), do: "open"
+
+  defp duration(seconds) do
+    minutes = div(seconds, 60)
+    "#{div(minutes, 60)}h #{String.pad_leading(Integer.to_string(rem(minutes, 60)), 2, "0")}m"
+  end
+
+  defp worker_name(users, user_id, own_id) do
+    cond do
+      user_id == own_id -> "You"
+      user = Enum.find(users, &(&1.id == user_id)) -> user.name
+      true -> "User #{user_id}"
+    end
+  end
+
+  defp role_label(roles, id), do: Enum.find_value(roles, "—", &(&1.id == id && &1.label))
+
+  defp run_label(_runs, nil), do: "Order"
+
+  defp run_label(runs, execution_id),
+    do:
+      Enum.find_value(runs, "Run #{execution_id}", &(&1.id == execution_id && &1.operation_code))
 
   defp can?(socket, capability),
     do: Authz.can(socket.assigns.current_scope.actor, capability).allowed
@@ -350,7 +639,7 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
       <.page variant={:list}>
         <.header>
           Shop floor
-          <:subtitle>Record what happened on a run: scrapped material and its reason.</:subtitle>
+          <:subtitle>Record what happened on a run: scrapped material and who worked on it.</:subtitle>
         </.header>
 
         <p :if={@error} id="floor-error" role="alert" class="mt-4 text-base text-danger-ink">{@error}</p>
@@ -378,6 +667,7 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
             </.button>
           </div>
           <.empty_state :if={@runs == []} title="No runs" reason="A run appears here once an operation of this order is completed." />
+          <div class="mt-5">{labour_panel(assigns)}</div>
         </section>
 
         <section :if={@run} id="floor-run" class="mt-5 space-y-5">
@@ -449,9 +739,96 @@ defmodule Bilimbi.Factory.ProductionExecution.Web.FloorLive do
               </div>
             </.form>
           </.card>
+
+          {labour_panel(assigns)}
         </section>
       </.page>
     </Layouts.app>
+    """
+  end
+
+  # Labour on the order, or on the selected run: clock in and out, totals per
+  # run, and a supervisor's entries and corrections for others.
+  defp labour_panel(assigns) do
+    ~H"""
+    <div class="space-y-5">
+      <.card :if={@can_record_labour? or @can_manage_labour?} id="floor-clock" title={if @run, do: "Clock in on this run", else: "Clock in on #{@order.code}"}>
+        <.form for={@labour_form} id="labour-form" phx-change="change_labour" phx-submit="clock_in" class="space-y-4 p-4">
+          <input type="hidden" name="labour[request_id]" value={@labour_form.params["request_id"]} />
+          <input type="hidden" name="labour[role_id]" value={@labour_form.params["role_id"]} />
+          <.input :if={@can_manage_labour?} field={@labour_form[:worker_user_id]} type="select" label="Worker" prompt="Me" options={for user <- @users, user.id != @user_id, do: {user.name, user.id}} class="min-h-14 text-base" />
+          <fieldset>
+            <legend class="mb-2 text-sm font-semibold">Role</legend>
+            <div class="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <.button :for={role <- @roles} :if={role.active} type="button" phx-click="pick_role" phx-value-id={role.id} aria-pressed={to_string(@labour_form.params["role_id"] == Integer.to_string(role.id))} variant={if @labour_form.params["role_id"] == Integer.to_string(role.id), do: "primary"} class={@touch}>
+                {role.label}
+              </.button>
+            </div>
+            <p :if={Enum.all?(@roles, &(not &1.active))} class="text-sm text-ink-muted">No active labour roles. An administrator defines them under Labour roles.</p>
+          </fieldset>
+          <.button type="submit" variant="primary" class={[@touch, "w-full"]} phx-disable-with="Clocking in…">Clock in</.button>
+        </.form>
+      </.card>
+
+      <.card id="floor-labour" inner_class="p-0" title="Labour">
+        <div class="grid grid-cols-2 gap-3 p-4 sm:grid-cols-4">
+          <div class="rounded-xl border border-line p-3">
+            <div class="text-sm text-ink-muted">Order total</div>
+            <div id="labour-total" class="text-xl tabular-nums">{duration(@labour_summary.total_seconds)}</div>
+          </div>
+          <div :for={run <- @labour_summary.runs} class="rounded-xl border border-line p-3">
+            <div class="text-sm text-ink-muted">{run_label(@runs, run.execution_id)}</div>
+            <div class="text-xl tabular-nums">{duration(run.seconds)}</div>
+          </div>
+        </div>
+        <.table id="labour-table" rows={Enum.filter(@labour, &is_nil(&1.corrected_by_id))} caption="Current labour" framed={false}>
+          <:col :let={entry} label="Worker">{worker_name(@users, entry.worker_user_id, @user_id)}</:col>
+          <:col :let={entry} label="Role">{role_label(@roles, entry.role_id)}</:col>
+          <:col :let={entry} label="Run">{run_label(@runs, entry.execution_id)}</:col>
+          <:col :let={entry} label="Start"><.datetime id={"labour-#{entry.id}-start"} value={entry.started_at} /></:col>
+          <:col :let={entry} label="Stop"><.datetime :if={entry.stopped_at} id={"labour-#{entry.id}-stop"} value={entry.stopped_at} /></:col>
+          <:col :let={entry} label="Time">{duration(entry.seconds)}</:col>
+          <:col :let={entry} label="Corrected">{if entry.corrects_id, do: entry.correction_reason, else: ""}</:col>
+          <:action :let={entry}>
+            <div class="flex gap-2">
+              <.button :if={is_nil(entry.stopped_at) and ((@can_record_labour? and entry.worker_user_id == @user_id) or @can_manage_labour?)} type="button" phx-click="clock_out" phx-value-id={entry.id} variant="primary" class={@touch}>Clock out</.button>
+              <.button :if={@can_manage_labour?} type="button" phx-click="start_labour_correction" phx-value-id={entry.id} class={@touch}>Correct</.button>
+            </div>
+          </:action>
+          <:empty :if={Enum.all?(@labour, & &1.corrected_by_id)} title="No labour" reason="Nobody has clocked in on this order yet." />
+        </.table>
+      </.card>
+
+      <.card :if={@labour_correcting} id="labour-correction" title="Correct labour">
+        <.form for={@labour_correction_form} id="labour-correction-form" phx-submit="save_labour_correction" class="space-y-4 p-4">
+          <input type="hidden" name="labour_correction[request_id]" value={@labour_correction_form.params["request_id"]} />
+          <.input field={@labour_correction_form[:role_id]} type="select" label="Role" options={for role <- @roles, role.active or role.id == @labour_correcting.role_id, do: {role.label, role.id}} class="min-h-14 text-base" />
+          <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <.input field={@labour_correction_form[:started_at]} type="datetime-local" label={"Start (#{zone_name()})"} class="min-h-14 text-base" />
+            <.input field={@labour_correction_form[:stopped_at]} type="datetime-local" label={"Stop (#{zone_name()}); empty keeps it open"} class="min-h-14 text-base" />
+          </div>
+          <.input field={@labour_correction_form[:correction_reason]} label="Why is this corrected?" />
+          <div class="flex gap-3">
+            <.button type="submit" variant="primary" class={@touch}>Save correction</.button>
+            <.button type="button" phx-click="cancel_labour_correction" class={@touch}>Cancel</.button>
+          </div>
+        </.form>
+      </.card>
+
+      <.card :if={@can_manage_labour?} id="labour-entry" title="Add a finished entry">
+        <.form for={@labour_entry_form} id="labour-entry-form" phx-submit="save_labour_entry" class="space-y-4 p-4">
+          <input type="hidden" name="entry[request_id]" value={@labour_entry_form.params["request_id"]} />
+          <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <.input field={@labour_entry_form[:worker_user_id]} type="select" label="Worker" prompt="Choose a worker" options={for user <- @users, do: {user.name, user.id}} class="min-h-14 text-base" />
+            <.input field={@labour_entry_form[:role_id]} type="select" label="Role" prompt="Choose a role" options={for role <- @roles, role.active, do: {role.label, role.id}} class="min-h-14 text-base" />
+            <.input field={@labour_entry_form[:started_at]} type="datetime-local" label={"Start (#{zone_name()})"} class="min-h-14 text-base" />
+            <.input field={@labour_entry_form[:stopped_at]} type="datetime-local" label={"Stop (#{zone_name()})"} class="min-h-14 text-base" />
+          </div>
+          <.input field={@labour_entry_form[:note]} label="Note (optional)" />
+          <.button type="submit" class={@touch}>Add entry</.button>
+        </.form>
+      </.card>
+    </div>
     """
   end
 end

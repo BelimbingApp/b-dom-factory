@@ -10,7 +10,9 @@ defmodule Bilimbi.Factory.ProductionExecution.Contributions do
   # company can let operators record and only supervisors correct.
   @capture [
     "factory.production-execution.wastage.record",
-    "factory.production-execution.wastage.correct"
+    "factory.production-execution.wastage.correct",
+    "factory.production-execution.labour.record",
+    "factory.production-execution.labour.manage"
   ]
 
   @impl true
@@ -32,6 +34,14 @@ defmodule Bilimbi.Factory.ProductionExecution.Contributions do
           route: "/factory/wastage-reasons",
           capability: @view,
           order: 80
+        },
+        %{
+          id: "admin.factory.labour-roles",
+          label: "Labour roles",
+          parent: "admin.factory",
+          route: "/factory/labour-roles",
+          capability: @view,
+          order: 85
         }
       ],
       authz: %{

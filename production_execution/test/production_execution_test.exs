@@ -23,6 +23,7 @@ defmodule Bilimbi.Factory.ProductionExecution.DescriptorTest do
              "base/tenancy",
              "base/ui",
              "core/company",
+             "core/user",
              "factory/inventory",
              "factory/product_definition"
            ]

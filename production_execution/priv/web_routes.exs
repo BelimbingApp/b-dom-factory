@@ -10,5 +10,11 @@
     live: Bilimbi.Factory.ProductionExecution.Web.WastageReasonsLive,
     session: :auth,
     capability: "factory.production-execution.configuration.view"
+  },
+  %{
+    path: "/factory/labour-roles",
+    live: Bilimbi.Factory.ProductionExecution.Web.LabourRolesLive,
+    session: :auth,
+    capability: "factory.production-execution.configuration.view"
   }
 ]

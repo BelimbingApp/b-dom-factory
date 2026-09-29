@@ -59,6 +59,35 @@ defmodule Bilimbi.Factory.ProductionExecution.TestFixtures do
   end
 
   @doc """
+  Labour tables, which reference Core User's `users`: call after
+  `Bilimbi.Core.User.TestFixtures.create_user_tables!/0` and
+  `create_production_tables!/0`.
+  """
+  def create_labour_tables! do
+    for sql <- [
+          "CREATE TEMPORARY TABLE factory_labour_roles (id bigserial PRIMARY KEY, company_id bigint NOT NULL REFERENCES companies(id), code varchar(64) NOT NULL, label text NOT NULL, active boolean NOT NULL DEFAULT true, inserted_at timestamp(0) NOT NULL, updated_at timestamp(0) NOT NULL, CONSTRAINT factory_labour_roles_company_id_code_unique UNIQUE (company_id, code), CONSTRAINT factory_labour_roles_id_company_id_unique UNIQUE (id, company_id)) ON COMMIT PRESERVE ROWS",
+          "CREATE TEMPORARY TABLE factory_labour_entries (id bigserial PRIMARY KEY, company_id bigint NOT NULL REFERENCES companies(id), request_id text NOT NULL, request_fingerprint text NOT NULL, order_id bigint NOT NULL REFERENCES factory_production_orders(id), execution_id bigint REFERENCES factory_operation_executions(id), worker_user_id bigint NOT NULL REFERENCES users(id), role_id bigint NOT NULL, started_at timestamp(6) NOT NULL, stopped_at timestamp(6), note text, recorded_by_type text NOT NULL, recorded_by_id bigint NOT NULL, recorded_by_acting_for_user_id bigint, stopped_by_type text, stopped_by_id bigint, stopped_by_acting_for_user_id bigint, corrects_id bigint UNIQUE REFERENCES factory_labour_entries(id), correction_reason text, inserted_at timestamp(0) NOT NULL, UNIQUE(company_id, request_id), CONSTRAINT factory_labour_entries_role_id_fkey FOREIGN KEY (role_id, company_id) REFERENCES factory_labour_roles (id, company_id), CONSTRAINT factory_labour_entries_times CHECK ((stopped_at IS NULL AND stopped_by_type IS NULL AND stopped_by_id IS NULL) OR (stopped_at >= started_at AND stopped_by_type IS NOT NULL AND stopped_by_id IS NOT NULL)), CONSTRAINT factory_labour_entries_correction CHECK ((corrects_id IS NULL AND correction_reason IS NULL) OR (corrects_id IS NOT NULL AND length(btrim(correction_reason)) > 0))) ON COMMIT PRESERVE ROWS",
+          """
+          CREATE FUNCTION pg_temp.refuse_labour_change() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+            IF TG_OP = 'UPDATE' THEN
+              IF OLD.stopped_at IS NULL AND NEW.stopped_at IS NOT NULL
+                AND (to_jsonb(NEW) - 'stopped_at' - 'stopped_by_type' - 'stopped_by_id' - 'stopped_by_acting_for_user_id')
+                  = (to_jsonb(OLD) - 'stopped_at' - 'stopped_by_type' - 'stopped_by_id' - 'stopped_by_acting_for_user_id') THEN
+                RETURN NEW;
+              END IF;
+            END IF;
+            RAISE EXCEPTION 'labour entries are immutable once closed; record a correction';
+          END $$
+          """,
+          "CREATE TRIGGER labour_entries_append_only BEFORE UPDATE OR DELETE ON factory_labour_entries FOR EACH ROW EXECUTE FUNCTION pg_temp.refuse_labour_change()",
+          "CREATE TRIGGER labour_entries_no_truncate BEFORE TRUNCATE ON factory_labour_entries FOR EACH STATEMENT EXECUTE FUNCTION pg_temp.refuse_labour_change()"
+        ],
+        do: SQL.query!(Repo, sql, [])
+
+    :ok
+  end
+
+  @doc """
   A completed slitting run for shop-floor capture tests, over `mill!/0`'s
   context: 120 kg of coil received as one lot, then 100 kg of it slit into an
   80 kg sheet unit and a 15 kg trim lot with a 5 kg variance. The resource

@@ -12,6 +12,7 @@
     "base/tenancy",
     "base/ui",
     "core/company",
+    "core/user",
     "factory/inventory",
     "factory/product_definition"
   ],
@@ -19,7 +20,8 @@
   migration_dispositions: %{
     20_260_926_130_000 => :bilimbi_only,
     20_260_926_150_000 => :bilimbi_only,
-    20_260_929_100_000 => :bilimbi_only
+    20_260_929_100_000 => :bilimbi_only,
+    20_260_929_110_000 => :bilimbi_only
   },
   web: "priv/web_routes.exs",
   schema_contract: nil,

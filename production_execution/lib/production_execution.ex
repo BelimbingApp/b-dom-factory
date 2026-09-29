@@ -10,9 +10,10 @@ defmodule Bilimbi.Factory.ProductionExecution do
   refused. Historical imports keep their source approver as separate evidence.
 
   Shop-floor capture against a run (an execution) follows the same recorder
-  rule: wastage, posted through Inventory as scrap tied to the run, with
-  append-only corrections. The company's wastage reasons are its
-  configuration.
+  rule: wastage, posted through Inventory as scrap tied to the run, and the
+  labour time company users work on an order and its runs, each with
+  append-only corrections. The company's wastage reasons and labour roles are
+  its configuration.
   """
   import Ecto.Query
   alias Bilimbi.Base.Repo
@@ -26,11 +27,14 @@ defmodule Bilimbi.Factory.ProductionExecution do
   alias Bilimbi.Factory.ProductionExecution.HoldOverride
   alias Bilimbi.Factory.ProductionExecution.Trace
   alias Bilimbi.Factory.ProductionExecution.Yield
-  alias Bilimbi.Factory.ProductionExecution.Schemas.{Execution, Order, WastageReason}
+  alias Bilimbi.Factory.ProductionExecution.Labour
+  alias Bilimbi.Factory.ProductionExecution.Schemas.{Execution, LabourRole, Order, WastageReason}
   alias Bilimbi.Factory.ProductionExecution.Wastage
 
   @wastage_record "factory.production-execution.wastage.record"
   @wastage_correct "factory.production-execution.wastage.correct"
+  @labour_record "factory.production-execution.labour.record"
+  @labour_manage "factory.production-execution.labour.manage"
 
   @order_fields [
     :id,
@@ -761,6 +765,224 @@ defmodule Bilimbi.Factory.ProductionExecution do
   def list_wastage(%Scope{} = scope, company_id, execution_id) do
     with {:ok, execution} <- get_execution(scope, company_id, execution_id),
          do: {:ok, Wastage.list(company_id, execution.id)}
+  end
+
+  # ============================================================================
+  # Labour
+  # ============================================================================
+
+  @doc "Lists the company's labour roles by code; `active: true` keeps those offered for new entries."
+  def list_labour_roles(%Scope{} = scope, company_id, opts \\ []) do
+    with {:ok, _company} <- company(scope, company_id),
+         do: {:ok, CaptureCodes.list(LabourRole, company_id, opts)}
+  end
+
+  def get_labour_role(%Scope{} = scope, company_id, role_id) do
+    with {:ok, _company} <- company(scope, company_id),
+         do: CaptureCodes.get(LabourRole, company_id, role_id, :labour_role_not_found)
+  end
+
+  @doc "Defines a labour role from `code` (upper-cased, unique in the company, fixed once created), `label`, and optional `active`."
+  def create_labour_role(%Scope{} = scope, company_id, attrs) when is_map(attrs) do
+    with {:ok, _company} <- company(scope, company_id),
+         do: CaptureCodes.create(LabourRole, company_id, attrs)
+  end
+
+  @doc "Changes a labour role's `label` or `active`; its code stays fixed."
+  def update_labour_role(%Scope{} = scope, company_id, role_id, attrs) when is_map(attrs) do
+    with {:ok, _company} <- company(scope, company_id),
+         do: CaptureCodes.update(LabourRole, company_id, role_id, attrs, :labour_role_not_found)
+  end
+
+  @doc """
+  Clocks a company user in on an order, optionally on one of its runs
+  (`execution_id`), in an active labour role, starting now. The worker is
+  `worker_user_id`, by default the recorder. Clocking oneself in needs
+  `factory.production-execution.labour.record` on the order; clocking in
+  someone else needs `factory.production-execution.labour.manage`. A worker
+  has at most one open entry (`:worker_already_clocked_in`). Attributes:
+  company-unique `request_id`, `role_id`, optional `worker_user_id`,
+  `execution_id`, and `note`.
+  """
+  def clock_in(%Scope{} = scope, company_id, order_id, attrs) when is_map(attrs),
+    do: new_labour(scope, company_id, order_id, attrs, :now)
+
+  def clock_in(%Scope{}, _company_id, _order_id, _attrs), do: {:error, :invalid_labour}
+
+  @doc """
+  Records a completed labour entry with past `started_at` and `stopped_at`
+  (UTC DateTimes, stop after start), with the same attributes, capabilities,
+  and worker rule as `clock_in/4`. It must not overlap the worker's other
+  current entries (`:labour_overlap`).
+  """
+  def record_labour(%Scope{} = scope, company_id, order_id, attrs) when is_map(attrs),
+    do: new_labour(scope, company_id, order_id, attrs, :given)
+
+  def record_labour(%Scope{}, _company_id, _order_id, _attrs), do: {:error, :invalid_labour}
+
+  @doc """
+  Clocks an open entry out now. The worker needs
+  `factory.production-execution.labour.record`; anyone else needs
+  `factory.production-execution.labour.manage`. An entry is closed once;
+  after that it changes only by correction.
+  """
+  def clock_out(%Scope{} = scope, company_id, entry_id) do
+    with {:ok, _company} <- company(scope, company_id),
+         {:ok, entry} <- Labour.get(company_id, entry_id),
+         {:ok, recorder} <- Capture.recorder(scope, company_id),
+         :ok <-
+           authorize_labour(scope, company_id, entry.order_id, entry.worker_user_id, recorder) do
+      Repo.transaction(fn ->
+        Labour.lock_worker!(company_id, entry.worker_user_id)
+        entry = Repo.reload!(entry)
+
+        cond do
+          Labour.corrected?(entry) -> Repo.rollback(:labour_entry_corrected)
+          entry.stopped_at -> Repo.rollback(:labour_entry_closed)
+          true -> entry |> Labour.close!(recorder, DateTime.utc_now()) |> Labour.read()
+        end
+      end)
+    end
+  end
+
+  @doc """
+  Corrects a labour entry with a new entry that names it; the original is
+  never changed and an entry is corrected at most once. Needs
+  `factory.production-execution.labour.manage` on the order. Attributes:
+  company-unique `request_id`, nonblank `correction_reason`, and any of
+  `started_at`, `stopped_at` (nil keeps the corrected entry open),
+  `role_id`, `execution_id`, and `note`; the worker and order stay.
+  """
+  def correct_labour(%Scope{} = scope, company_id, entry_id, attrs) when is_map(attrs) do
+    with {:ok, _company} <- company(scope, company_id),
+         {:ok, entry} <- Labour.get(company_id, entry_id),
+         {:ok, recorder} <- Capture.recorder(scope, company_id),
+         :ok <- Capture.authorize(scope, company_id, entry.order_id, @labour_manage),
+         {:ok, request} <- Labour.validate_correction(company_id, entry, attrs) do
+      Repo.transaction(fn ->
+        Labour.lock_worker!(company_id, entry.worker_user_id)
+
+        case Labour.by_request(company_id, request.request_id) do
+          nil ->
+            others = Labour.current_for_worker(company_id, entry.worker_user_id, entry.id)
+
+            cond do
+              Labour.corrected?(entry) ->
+                Repo.rollback(:labour_entry_corrected)
+
+              is_nil(request.stopped_at) and Enum.any?(others, &is_nil(&1.stopped_at)) ->
+                Repo.rollback(:worker_already_clocked_in)
+
+              Labour.overlapping?(
+                others,
+                request.started_at,
+                request.stopped_at,
+                DateTime.utc_now()
+              ) ->
+                Repo.rollback(:labour_overlap)
+
+              true ->
+                request
+                |> Map.merge(recorder)
+                |> Map.merge(stopper(request, recorder))
+                |> Map.put(:company_id, company_id)
+                |> Labour.insert!()
+                |> Labour.read()
+            end
+
+          existing ->
+            replay(existing, request, &Labour.read/1)
+        end
+      end)
+    end
+  end
+
+  def correct_labour(%Scope{}, _company_id, _entry_id, _attrs), do: {:error, :invalid_labour}
+
+  @doc "Lists an order's labour entries by start time; `corrected_by_id` names an entry's correction, and `seconds` is a closed entry's duration."
+  def list_labour(%Scope{} = scope, company_id, order_id) do
+    with {:ok, order} <- get_order(scope, company_id, order_id),
+         do: {:ok, Labour.list(company_id, order.id)}
+  end
+
+  @doc """
+  Totals an order's current labour entries: `total_seconds` of closed time,
+  `runs` and `workers` with each one's closed `seconds` and entry count (a
+  run's `execution_id` is nil for time on the order but no run), and the
+  entries still `open`.
+  """
+  def labour_summary(%Scope{} = scope, company_id, order_id) do
+    with {:ok, entries} <- list_labour(scope, company_id, order_id),
+         do: {:ok, Labour.summary(entries)}
+  end
+
+  defp new_labour(scope, company_id, order_id, attrs, times) do
+    with {:ok, order} <- get_order(scope, company_id, order_id),
+         {:ok, recorder} <- Capture.recorder(scope, company_id),
+         {:ok, worker_id} <- labour_worker(attrs, recorder),
+         :ok <- authorize_labour(scope, company_id, order.id, worker_id, recorder),
+         {:ok, request} <-
+           Labour.validate_entry(scope, company_id, order, worker_id, attrs, times) do
+      Repo.transaction(fn ->
+        Labour.lock_worker!(company_id, worker_id)
+
+        case Labour.by_request(company_id, request.request_id) do
+          nil ->
+            others = Labour.current_for_worker(company_id, worker_id)
+
+            cond do
+              times == :now and Enum.any?(others, &is_nil(&1.stopped_at)) ->
+                Repo.rollback(:worker_already_clocked_in)
+
+              Labour.overlapping?(
+                others,
+                request.started_at,
+                request.stopped_at,
+                DateTime.utc_now()
+              ) ->
+                Repo.rollback(:labour_overlap)
+
+              true ->
+                request
+                |> Map.merge(recorder)
+                |> Map.merge(stopper(request, recorder))
+                |> Map.put(:company_id, company_id)
+                |> Labour.insert!()
+                |> Labour.read()
+            end
+
+          existing ->
+            replay(existing, request, &Labour.read/1)
+        end
+      end)
+    end
+  end
+
+  defp labour_worker(attrs, recorder) do
+    case Capture.value(attrs, :worker_user_id) do
+      nil when recorder.recorded_by_type == "user" -> {:ok, recorder.recorded_by_id}
+      nil -> {:error, :worker_not_found}
+      id when is_integer(id) -> {:ok, id}
+      _ -> {:error, :worker_not_found}
+    end
+  end
+
+  # Recording one's own time needs the record capability; anyone else's,
+  # the manage capability.
+  defp authorize_labour(scope, company_id, order_id, worker_id, recorder) do
+    own? = recorder.recorded_by_type == "user" and recorder.recorded_by_id == worker_id
+    capability = if own?, do: @labour_record, else: @labour_manage
+    Capture.authorize(scope, company_id, order_id, capability)
+  end
+
+  defp stopper(%{stopped_at: nil}, _recorder), do: %{}
+
+  defp stopper(_request, recorder) do
+    %{
+      stopped_by_type: recorder.recorded_by_type,
+      stopped_by_id: recorder.recorded_by_id,
+      stopped_by_acting_for_user_id: recorder.recorded_by_acting_for_user_id
+    }
   end
 
   defp post_wastage_correction(scope, company_id, execution, order, record, recorder, request) do

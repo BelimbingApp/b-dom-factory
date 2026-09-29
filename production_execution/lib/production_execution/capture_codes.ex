@@ -102,3 +102,18 @@ defmodule Bilimbi.Factory.ProductionExecution.Schemas.WastageReason do
 
   def unique_code_index, do: :factory_wastage_reasons_company_id_code_unique
 end
+
+defmodule Bilimbi.Factory.ProductionExecution.Schemas.LabourRole do
+  @moduledoc false
+  use Ecto.Schema
+
+  schema "factory_labour_roles" do
+    field(:company_id, :integer)
+    field(:code, :string)
+    field(:label, :string)
+    field(:active, :boolean, default: true)
+    timestamps(type: :naive_datetime)
+  end
+
+  def unique_code_index, do: :factory_labour_roles_company_id_code_unique
+end

@@ -54,7 +54,9 @@
   `Capture.recorder/2` and decide with `Capture.authorize/4` before opening a
   transaction (`lib/production_execution/capture.ex`); keep the evidence
   append-only and correct it with a new row naming the corrected one, as
-  `lib/production_execution/wastage.ex` does. Never update a capture row.
+  `lib/production_execution/wastage.ex` does. Never update a capture row;
+  the one exception is closing an open labour entry, which the migration's
+  trigger allows once (`lib/production_execution/labour.ex`).
 - A company's shop-floor code list (code, label, active) is a table read
   through `lib/production_execution/capture_codes.ex` and administered with
   `Web.CodeList`; do not hard-code the entries or build another admin screen
