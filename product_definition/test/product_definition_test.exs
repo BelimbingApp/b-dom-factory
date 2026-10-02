@@ -42,7 +42,7 @@ defmodule Bilimbi.Factory.ProductDefinitionTest do
     )
 
     insert_tenant!(%{id: 41, name: "Operator"})
-    insert_tenant!(%{id: 42, name: "Other"})
+    insert_tenant!(%{id: 42, name: "Other", is_platform_operator: false})
     insert_company!(%{id: 73, tenant_id: 41, name: "Mill", code: "mill"})
     insert_company!(%{id: 74, tenant_id: 42, name: "Other", code: "other"})
     insert_company!(%{id: 75, tenant_id: 41, name: "Sister", code: "sister"})
