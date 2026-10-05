@@ -26,7 +26,7 @@ env:
 jobs:
   mounted:
     name: Mounted in Bilimbi
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
 
     env:
@@ -180,7 +180,7 @@ jobs:
   # Factory: nothing in the Platform may require it.
   absent:
     name: Bilimbi without Factory
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
 
     env:
