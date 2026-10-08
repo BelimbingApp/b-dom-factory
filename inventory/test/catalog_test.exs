@@ -1,5 +1,5 @@
 defmodule Bilimbi.Factory.Inventory.CatalogTest do
-  use Bilimbi.Base.Database.DataCase, async: true
+  use Bilimbi.Base.Database.DataCase, async: false
 
   alias Bilimbi.Base.Settings
   alias Bilimbi.Base.Tenancy

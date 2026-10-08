@@ -1,5 +1,5 @@
 defmodule Bilimbi.Factory.ProductDefinitionTest do
-  use Bilimbi.Base.Database.DataCase, async: true
+  use Bilimbi.Base.Database.DataCase, async: false
 
   alias Bilimbi.Base.Repo
   alias Bilimbi.Base.Tenancy

@@ -43,6 +43,11 @@ defmodule Bilimbi.Factory.Inventory.TestFixtures do
   (`:statuses`, default `["draft", "ready", "archived"]` as an example set;
   `nil` removes the override) and the default currency (`:currency`, default
   `"USD"`; `nil` removes it).
+
+  Base Settings caches reads node-wide by key and scope, and `mill!/1` reuses
+  fixed company and tenant ids, so a test module that calls it (or
+  `configure_item_settings!/3`) must be `async: false`; two async modules would
+  read each other's cached values.
   """
   def configure_item_settings!(company_id, tenant_id, opts \\ []) do
     opts = Keyword.validate!(opts, statuses: ["draft", "ready", "archived"], currency: "USD")
