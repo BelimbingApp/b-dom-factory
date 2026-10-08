@@ -1,5 +1,5 @@
 defmodule Bilimbi.Factory.Inventory.TransformTest do
-  use Bilimbi.Base.Database.DataCase, async: true
+  use Bilimbi.Base.Database.DataCase, async: false
 
   alias Bilimbi.Factory.Inventory
   alias Bilimbi.Factory.Inventory.Balance

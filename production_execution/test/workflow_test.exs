@@ -5,7 +5,7 @@ defmodule Bilimbi.Factory.ProductionExecution.WorkflowTest do
   # a coating-and-slitting chain that mixes area, mass, and counted rolls)
   # live only in these fixtures: Inventory carries no process rule or source
   # mapping for any of them.
-  use Bilimbi.Base.Database.DataCase, async: true
+  use Bilimbi.Base.Database.DataCase, async: false
 
   alias Bilimbi.Factory.{Inventory, ProductDefinition, ProductionExecution}
   alias Bilimbi.Factory.Inventory.Transaction

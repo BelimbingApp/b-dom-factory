@@ -49,6 +49,9 @@ and phases are Bilimbi's `docs/plans/factory/0000-factory-domain.md` and
   shape); adoption refuses a missing table, so Bilimbi-only tables stay out,
   as Core Geonames' postcode overrides do. `inventory/lib/inventory/schema_contract.ex`
   is the example.
+- Base Settings caches reads node-wide by key and scope, and fixtures reuse
+  company ids, so a test module that configures or reads settings (anything
+  using `mill!/1`) is `async: false`; async ones flake across each other.
 - Module tests run against temporary tables built in each module's
   `test/support/test_fixtures.ex`, not its migrations (Core Compatibility runs
   those). Mirror a new migration's constraints and triggers there, or a test
